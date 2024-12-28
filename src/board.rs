@@ -1,6 +1,6 @@
 use crate::{GameError, Position};
 use rand::Rng;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Cell {
@@ -9,12 +9,43 @@ pub enum Cell {
     Flagged(bool),
 }
 
+#[derive(Debug, PartialEq)]
+pub enum RevealResult {
+    Safe,
+    Mine,
+}
+
 #[derive(Debug)]
 pub struct Board {
     pub cells: HashMap<Position, Cell>,
     width: u32,
     height: u32,
     mines_count: u32,
+    revealed_count: u32,
+}
+
+pub struct BoardIterator {
+    width: i32,
+    height: i32,
+    current: Option<Position>,
+}
+
+impl Iterator for BoardIterator {
+    type Item = Position;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let current = self.current?;
+
+        self.current = if current.x + 1 < self.width {
+            Some(Position::new(current.x + 1, current.y))
+        } else if current.y + 1 < self.height {
+            Some(Position::new(0, current.y + 1))
+        } else {
+            None
+        };
+
+        Some(current)
+    }
 }
 
 impl Board {
@@ -32,6 +63,7 @@ impl Board {
             width,
             height,
             mines_count,
+            revealed_count: 0,
         };
         board.initialize_cells();
         board.place_mines();
@@ -39,11 +71,8 @@ impl Board {
     }
 
     fn initialize_cells(&mut self) {
-        for y in 0..self.height {
-            for x in 0..self.width {
-                self.cells
-                    .insert(Position::new(x as i32, y as i32), Cell::Hidden(false));
-            }
+        for pos in self.iter_positions() {
+            self.cells.insert(pos, Cell::Hidden(false));
         }
     }
 
@@ -90,7 +119,85 @@ impl Board {
     pub fn mines_count(&self) -> u32 {
         self.mines_count
     }
+
+    pub fn reveal(&mut self, pos: Position) -> Result<RevealResult, GameError> {
+        if !self.is_within_bounds(pos) {
+            return Err(GameError::OutOfBounds(pos));
+        }
+
+        match self.get_cell(pos)? {
+            Cell::Revealed(_) => return Err(GameError::AlreadyRevealed(pos)),
+            Cell::Flagged(_) => return Ok(RevealResult::Safe),
+            Cell::Hidden(true) => {
+                self.cells.insert(pos, Cell::Revealed(0));
+                return Ok(RevealResult::Mine);
+            }
+            Cell::Hidden(false) => {
+                let mut to_reveal = HashSet::new();
+                to_reveal.insert(pos);
+
+                while !to_reveal.is_empty() {
+                    let mut next_batch = HashSet::new();
+
+                    for &current_pos in &to_reveal {
+                        if let Cell::Hidden(false) = self.get_cell(current_pos)? {
+                            let adjacent_mines = self.count_adjacent_mines(current_pos);
+                            self.cells
+                                .insert(current_pos, Cell::Revealed(adjacent_mines));
+
+                            if adjacent_mines == 0 {
+                                for neighbor_pos in current_pos.neighbors() {
+                                    if self.is_within_bounds(neighbor_pos) {
+                                        if let Ok(Cell::Hidden(false)) = self.get_cell(neighbor_pos)
+                                        {
+                                            next_batch.insert(neighbor_pos);
+                                        }
+                                    }
+                                }
+                            }
+                            self.revealed_count += 1;
+                        }
+                    }
+
+                    to_reveal = next_batch;
+                }
+            }
+        }
+
+        Ok(RevealResult::Safe)
+    }
+
+    pub fn toggle_flag(&mut self, pos: Position) -> Result<(), GameError> {
+        if !self.is_within_bounds(pos) {
+            return Err(GameError::OutOfBounds(pos));
+        }
+
+        match self.get_cell(pos)? {
+            Cell::Hidden(has_mine) => {
+                self.cells.insert(pos, Cell::Flagged(*has_mine));
+            }
+            Cell::Flagged(has_mine) => {
+                self.cells.insert(pos, Cell::Hidden(*has_mine));
+            }
+            Cell::Revealed(_) => return Err(GameError::AlreadyRevealed(pos)),
+        }
+
+        Ok(())
+    }
+
+    pub fn iter_positions(&self) -> BoardIterator {
+        BoardIterator {
+            width: self.width as i32,
+            height: self.height as i32,
+            current: Some(Position::new(0, 0)),
+        }
+    }
+
+    pub fn revealed_count(&self) -> u32 {
+        self.revealed_count
+    }
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;
