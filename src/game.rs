@@ -130,3 +130,98 @@ impl Game {
         self.board.dimensions()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn create_test_game() -> Game {
+        Game::new(3, 3, 2).unwrap()
+    }
+
+    #[test]
+    fn test_game_creation() {
+        let game = create_test_game();
+        assert_eq!(game.state(), GameState::Playing);
+        assert_eq!(game.dimensions(), (3, 3));
+    }
+
+    #[test]
+    fn test_reveal_empty_cell() {
+        let mut game = create_test_game();
+        let pos = Position::new(0, 0);
+
+        // Ensure the cell at (0,0) is not a mine by setting it explicitly
+        game.board.cells.insert(pos, Cell::Hidden(false));
+
+        game.reveal(pos).unwrap();
+        match game.get_cell(pos).unwrap() {
+            Cell::Revealed(_) => {}
+            _ => panic!("Cell should be revealed"),
+        }
+        assert_eq!(game.state(), GameState::Playing);
+    }
+
+    #[test]
+    fn test_reveal_mine() {
+        let mut game = create_test_game();
+        let pos = Position::new(0, 0);
+
+        // Place a mine at (0,0)
+        game.board.cells.insert(pos, Cell::Hidden(true));
+
+        game.reveal(pos).unwrap();
+        assert_eq!(game.state(), GameState::Lost);
+    }
+
+    #[test]
+    fn test_flag_cell() {
+        let mut game = create_test_game();
+        let pos = Position::new(0, 0);
+
+        game.toggle_flag(pos).unwrap();
+        assert!(matches!(game.get_cell(pos).unwrap(), Cell::Flagged(_)));
+
+        // Toggle flag again should return to hidden
+        game.toggle_flag(pos).unwrap();
+        assert!(matches!(game.get_cell(pos).unwrap(), Cell::Hidden(_)));
+    }
+
+    #[test]
+    fn test_out_of_bounds() {
+        let mut game = create_test_game();
+        let pos = Position::new(5, 5);
+
+        assert!(matches!(game.reveal(pos), Err(GameError::OutOfBounds(_))));
+    }
+
+    #[test]
+    fn test_reveal_flagged_cell() {
+        let mut game = create_test_game();
+        let pos = Position::new(0, 0);
+
+        game.toggle_flag(pos).unwrap();
+        assert!(matches!(game.get_cell(pos).unwrap(), Cell::Flagged(_)));
+
+        // Revealing a flagged cell should have no effect
+        game.reveal(pos).unwrap();
+        assert!(matches!(game.get_cell(pos).unwrap(), Cell::Flagged(_)));
+    }
+
+    #[test]
+    fn test_win_condition() {
+        let mut game = Game::new(2, 1, 1).unwrap();
+        let mine_pos = Position::new(0, 0);
+        let safe_pos = Position::new(1, 0);
+
+        // Set up a simple board with one mine
+        game.board.cells.insert(mine_pos, Cell::Hidden(true));
+        game.board.cells.insert(safe_pos, Cell::Hidden(false));
+
+        // Reveal the safe cell
+        game.reveal(safe_pos).unwrap();
+
+        // Game should be won because all non-mine cells are revealed
+        assert_eq!(game.state(), GameState::Won);
+    }
+}

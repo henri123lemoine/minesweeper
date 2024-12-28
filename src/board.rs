@@ -91,3 +91,57 @@ impl Board {
         self.mines_count
     }
 }
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_board_creation() {
+        let board = Board::new(5, 5, 5).unwrap();
+        assert_eq!(board.dimensions(), (5, 5));
+        assert_eq!(board.mines_count(), 5);
+
+        // Count mines
+        let mine_count = board
+            .cells
+            .values()
+            .filter(|cell| matches!(cell, Cell::Hidden(true)))
+            .count();
+        assert_eq!(mine_count, 5);
+    }
+
+    #[test]
+    fn test_too_many_mines() {
+        let result = Board::new(5, 5, 26);
+        assert!(matches!(
+            result,
+            Err(GameError::TooManyMines {
+                width: 5,
+                height: 5,
+                mines: 26
+            })
+        ));
+    }
+
+    #[test]
+    fn test_within_bounds() {
+        let board = Board::new(5, 5, 5).unwrap();
+
+        assert!(board.is_within_bounds(Position::new(0, 0)));
+        assert!(board.is_within_bounds(Position::new(4, 4)));
+        assert!(!board.is_within_bounds(Position::new(5, 5)));
+        assert!(!board.is_within_bounds(Position::new(-1, 0)));
+    }
+
+    #[test]
+    fn test_count_adjacent_mines() {
+        let mut board = Board::new(3, 3, 0).unwrap();
+
+        // Place mines manually
+        board.cells.insert(Position::new(0, 0), Cell::Hidden(true));
+        board.cells.insert(Position::new(1, 0), Cell::Hidden(true));
+
+        assert_eq!(board.count_adjacent_mines(Position::new(0, 1)), 2);
+        assert_eq!(board.count_adjacent_mines(Position::new(2, 2)), 0);
+    }
+}
