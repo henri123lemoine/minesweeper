@@ -1,36 +1,39 @@
-use minesweeper::{Board, Cell};
+use minesweeper::{Action, Cell, Game, GameError, GameState, Position};
 use std::io::{self, Write};
 
 fn main() {
-    let mut board = Board::new(10, 10, 10); // 10x10 board with 10 mines
+    match run_game() {
+        Ok(_) => println!("Thanks for playing!"),
+        Err(e) => eprintln!("Game error: {}", e),
+    }
+}
 
-    while !board.is_game_over() && !board.is_won() {
-        print_board(&board);
+fn run_game() -> Result<(), GameError> {
+    let mut game = Game::new(10, 10, 10)?;
 
-        if let Some((x, y, action)) = get_user_input(&board) {
-            match action {
-                'r' => {
-                    if !board.reveal(x, y) {
-                        println!("Game Over!");
-                        break;
-                    }
-                }
-                'f' => {
-                    board.toggle_flag(x, y);
-                }
-                _ => println!("Invalid action"),
+    while game.state() == GameState::Playing {
+        print_board(&game);
+
+        if let Some((pos, action)) = get_user_input(&game) {
+            if let Err(e) = game.perform_action(pos, action) {
+                println!("Error: {}", e);
+                continue;
             }
         }
     }
 
-    print_board(&board);
-    if board.is_won() {
-        println!("Congratulations! You won!");
+    print_board(&game);
+    match game.state() {
+        GameState::Won => println!("Congratulations! You won!"),
+        GameState::Lost => println!("Game Over!"),
+        GameState::Playing => unreachable!(),
     }
+
+    Ok(())
 }
 
-fn print_board(board: &Board) {
-    let (width, height) = board.dimensions();
+fn print_board(game: &Game) {
+    let (width, height) = game.dimensions();
 
     // Print column numbers
     print!("  ");
@@ -41,20 +44,21 @@ fn print_board(board: &Board) {
 
     // Print rows
     for y in 0..height {
-        print!("{} ", y); // Row numbers
+        print!("{} ", y);
         for x in 0..width {
-            match board.get_cell(x, y).unwrap() {
+            let pos = Position::new(x as i32, y as i32);
+            match game.get_cell(pos).unwrap() {
                 Cell::Hidden(_) => print!("□ "),
                 Cell::Revealed(0) => print!("  "),
                 Cell::Revealed(n) => print!("{} ", n),
-                Cell::Flagged => print!("⚑ "),
+                Cell::Flagged(_) => print!("⚑ "),
             }
         }
         println!();
     }
 }
 
-fn get_user_input(board: &Board) -> Option<(usize, usize, char)> {
+fn get_user_input(game: &Game) -> Option<(Position, Action)> {
     print!("Enter command (x y [r/f]): ");
     io::stdout().flush().unwrap();
 
@@ -67,16 +71,21 @@ fn get_user_input(board: &Board) -> Option<(usize, usize, char)> {
     let y = parts.next()?.parse().ok()?;
     let action = parts.next()?.chars().next()?;
 
-    let (width, height) = board.dimensions();
-    if x >= width || y >= height {
+    let pos = Position::new(x, y);
+
+    if !game.get_cell(pos).is_ok() {
         println!("Position out of bounds");
         return None;
     }
 
-    if action != 'r' && action != 'f' {
-        println!("Invalid action. Use 'r' to reveal or 'f' to flag");
-        return None;
-    }
+    let action = match action {
+        'r' => Some(Action::Reveal),
+        'f' => Some(Action::Flag),
+        _ => {
+            println!("Invalid action. Use 'r' to reveal or 'f' to flag");
+            None
+        }
+    }?;
 
-    Some((x, y, action))
+    Some((pos, action))
 }
