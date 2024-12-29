@@ -7,40 +7,68 @@ use minesweeper::{
 };
 
 #[derive(Debug, Default)]
-struct SolverStats {
-    games_played: usize,
-    games_won: usize,
-    games_lost: usize,
-    total_moves: usize,
+struct GameStats {
+    won: bool,
+    lost: bool,
+    moves_made: usize,
     safe_moves: usize,
     mines_hit: usize,
     cells_remaining: usize,
 }
 
-impl SolverStats {
+#[derive(Debug, Default)]
+struct AggregateStats {
+    games: Vec<GameStats>,
+}
+
+impl AggregateStats {
+    fn games_played(&self) -> usize {
+        self.games.len()
+    }
+
     fn success_rate(&self) -> f64 {
-        if self.games_played == 0 {
+        if self.games_played() == 0 {
             return 0.0;
         }
-        self.games_won as f64 / self.games_played as f64 * 100.0
+        self.games.iter().filter(|g| g.won).count() as f64 / self.games_played() as f64 * 100.0
     }
 
     fn average_completion(&self, board_size: usize) -> f64 {
-        if self.games_played == 0 {
+        if self.games_played() == 0 {
             return 0.0;
         }
-        (board_size - self.cells_remaining) as f64 / board_size as f64 * 100.0
+        let completions: Vec<f64> = self
+            .games
+            .iter()
+            .map(|g| (board_size - g.cells_remaining) as f64 / board_size as f64 * 100.0)
+            .collect();
+        completions.iter().sum::<f64>() / self.games_played() as f64
+    }
+
+    fn average_moves(&self) -> f64 {
+        if self.games_played() == 0 {
+            return 0.0;
+        }
+        self.games.iter().map(|g| g.moves_made).sum::<usize>() as f64 / self.games_played() as f64
+    }
+
+    fn total_mines_hit(&self) -> usize {
+        self.games.iter().map(|g| g.mines_hit).sum()
+    }
+
+    fn total_safe_moves(&self) -> usize {
+        self.games.iter().map(|g| g.safe_moves).sum()
     }
 }
 
-fn solve_single_game(board: &mut Board, solver: &dyn Solver) -> SolverStats {
-    let mut stats = SolverStats::default();
-    stats.games_played = 1;
+fn solve_single_game(board: &mut Board, solver: &dyn Solver) -> GameStats {
+    let mut stats = GameStats::default();
+    let total_safe_cells = (board.dimensions().0 * board.dimensions().1) - board.mines_count();
 
     // Make initial move at (1,1)
     if let Ok(Cell::Hidden(is_mine)) = board.get_cell(Position::new(1, 1)) {
         if *is_mine {
-            stats.games_lost = 1;
+            stats.lost = true;
             stats.mines_hit = 1;
             return stats;
         }
@@ -48,7 +76,8 @@ fn solve_single_game(board: &mut Board, solver: &dyn Solver) -> SolverStats {
     let _ = board.reveal(Position::new(1, 1));
 
     // Keep solving until we can't make progress or hit a mine
-    for _ in 0..100 {
+    for _ in 0..200 {
+        // Increased move limit
         let solver_board = SolverBoard::new(board);
         let result = solver.solve(&solver_board);
 
@@ -56,7 +85,7 @@ fn solve_single_game(board: &mut Board, solver: &dyn Solver) -> SolverStats {
             break;
         }
 
-        stats.total_moves += 1;
+        stats.moves_made += 1;
 
         for action in result.actions {
             match action {
@@ -64,7 +93,7 @@ fn solve_single_game(board: &mut Board, solver: &dyn Solver) -> SolverStats {
                     if let Ok(Cell::Hidden(is_mine)) = board.get_cell(pos) {
                         if *is_mine {
                             stats.mines_hit += 1;
-                            stats.games_lost = 1;
+                            stats.lost = true;
                             return stats;
                         } else {
                             stats.safe_moves += 1;
@@ -75,47 +104,21 @@ fn solve_single_game(board: &mut Board, solver: &dyn Solver) -> SolverStats {
                 SolverAction::Flag(_) => {}
             }
         }
+
+        // Check if we've won
+        if board.revealed_count() == total_safe_cells {
+            stats.won = true;
+            break;
+        }
     }
 
     // Count remaining hidden cells
-    let total_cells = board.dimensions().0 * board.dimensions().1;
-    let mines = board.mines_count();
     stats.cells_remaining = board
         .iter_positions()
         .filter(|&pos| matches!(board.get_cell(pos), Ok(Cell::Hidden(_))))
         .count();
 
-    // If we cleared all non-mine cells, we won
-    if stats.cells_remaining as u32 == mines {
-        stats.games_won = 1;
-    }
-
     stats
-}
-
-fn run_solver_benchmark(
-    width: u32,
-    height: u32,
-    mines: u32,
-    solver: &dyn Solver,
-    iterations: usize,
-) -> SolverStats {
-    let mut total_stats = SolverStats::default();
-    total_stats.games_played = iterations;
-
-    for _ in 0..iterations {
-        let mut board = Board::new(width, height, mines).unwrap();
-        let game_stats = solve_single_game(&mut board, solver);
-
-        total_stats.games_won += game_stats.games_won;
-        total_stats.games_lost += game_stats.games_lost;
-        total_stats.total_moves += game_stats.total_moves;
-        total_stats.safe_moves += game_stats.safe_moves;
-        total_stats.mines_hit += game_stats.mines_hit;
-        total_stats.cells_remaining += game_stats.cells_remaining;
-    }
-
-    total_stats
 }
 
 fn benchmark_solvers(c: &mut Criterion) {
@@ -139,6 +142,8 @@ fn benchmark_solvers(c: &mut Criterion) {
     ];
 
     for (width, height, mines) in test_configs {
+        let board_size = (width * height) as usize;
+
         for (solver, name) in &solvers {
             // Performance benchmark
             group.bench_function(format!("{} {}x{}", name, width, height), |b| {
@@ -151,22 +156,24 @@ fn benchmark_solvers(c: &mut Criterion) {
                 );
             });
 
-            // Effectiveness stats (100 iterations)
-            let stats = run_solver_benchmark(width, height, mines, *solver, 100);
-            let board_size = (width * height) as usize;
+            // Effectiveness stats (50 iterations)
+            let mut aggregate = AggregateStats::default();
+            for _ in 0..50 {
+                let mut board = Board::new(width, height, mines).unwrap();
+                let game_stats = solve_single_game(&mut board, *solver);
+                aggregate.games.push(game_stats);
+            }
 
             println!("\n{} on {}x{} board:", name, width, height);
-            println!("Success rate: {:.1}%", stats.success_rate());
+            println!("Success rate: {:.1}%", aggregate.success_rate());
             println!(
-                "Board completion: {:.1}%",
-                stats.average_completion(board_size)
+                "Average board completion: {:.1}%",
+                aggregate.average_completion(board_size)
             );
-            println!(
-                "Average moves per game: {:.1}",
-                stats.total_moves as f64 / 100.0
-            );
-            println!("Mine hits: {}", stats.mines_hit);
-            println!("Safe moves: {}", stats.safe_moves);
+            println!("Average moves per game: {:.1}", aggregate.average_moves());
+            println!("Total mine hits: {}", aggregate.total_mines_hit());
+            println!("Total safe moves: {}", aggregate.total_safe_moves());
+            println!("Games played: {}", aggregate.games_played());
         }
     }
 
