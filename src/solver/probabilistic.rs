@@ -1,5 +1,5 @@
 use crate::solver::{Certainty, Solver};
-use crate::{Cell, Position};
+use crate::Position;
 use std::collections::{HashMap, HashSet};
 
 use super::{board::SolverCell, SolverAction, SolverBoard, SolverResult};
@@ -17,7 +17,6 @@ struct LocalConstraint {
 impl ProbabilisticSolver {
     fn get_constraints(&self, board: &SolverBoard) -> Vec<LocalConstraint> {
         let mut constraints = Vec::new();
-        let (width, height) = board.dimensions();
 
         for pos in board.iter_positions() {
             if let Some(SolverCell::Revealed(n)) = board.get(pos) {

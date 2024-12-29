@@ -154,7 +154,6 @@ pub struct MatrixSolver;
 impl MatrixSolver {
     fn build_system(&self, board: &SolverBoard) -> LinearSystem {
         let mut system = LinearSystem::new();
-        let (width, height) = board.dimensions();
         let mut var_idx = 0;
 
         // First pass: identify and map all unknown variables
