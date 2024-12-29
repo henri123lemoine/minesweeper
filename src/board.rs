@@ -15,7 +15,7 @@ pub enum RevealResult {
     Mine,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Board {
     pub cells: HashMap<Position, Cell>,
     width: u32,
