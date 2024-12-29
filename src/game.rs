@@ -106,7 +106,7 @@ mod tests {
         // Place a mine at (0,0)
         game.board.cells.insert(pos, Cell::Hidden(true));
 
-        game.board.reveal(pos).unwrap();
+        game.perform_action(pos, Action::Reveal).unwrap();
         assert_eq!(game.state(), GameState::Lost);
     }
 
@@ -158,9 +158,7 @@ mod tests {
         game.board.cells.insert(safe_pos, Cell::Hidden(false));
 
         // Reveal the safe cell
-        game.board.reveal(safe_pos).unwrap();
-
-        // Game should be won because all non-mine cells are revealed
+        game.perform_action(safe_pos, Action::Reveal).unwrap();
         assert_eq!(game.state(), GameState::Won);
     }
 }
