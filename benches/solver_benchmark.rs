@@ -241,12 +241,12 @@ fn create_solver_chains() -> Vec<(Box<dyn Solver>, &'static str)> {
             "Matrix Only",
         ),
         // Probabilistic
-        (
-            Box::new(ChainSolver::new(vec![Box::new(ProbabilisticSolver {
-                min_confidence: 0.95,
-            })])),
-            "Probabilistic Only",
-        ),
+        // (
+        //     Box::new(ChainSolver::new(vec![Box::new(ProbabilisticSolver {
+        //         min_confidence: 0.95,
+        //     })])),
+        //     "Probabilistic Only",
+        // ),
         // CHAINS //
         // Counting + Matrix
         (
@@ -267,16 +267,16 @@ fn create_solver_chains() -> Vec<(Box<dyn Solver>, &'static str)> {
             "Counting + Probabilistic",
         ),
         // FULL CHAIN //
-        (
-            Box::new(ChainSolver::new(vec![
-                Box::new(CountingSolver),
-                Box::new(MatrixSolver),
-                Box::new(ProbabilisticSolver {
-                    min_confidence: 0.95,
-                }),
-            ])),
-            "Full Chain",
-        ),
+        // (
+        //     Box::new(ChainSolver::new(vec![
+        //         Box::new(CountingSolver),
+        //         Box::new(MatrixSolver),
+        //         Box::new(ProbabilisticSolver {
+        //             min_confidence: 0.95,
+        //         }),
+        //     ])),
+        //     "Full Chain",
+        // ),
     ]
 }
 
@@ -315,9 +315,9 @@ fn benchmark_solver_chains(c: &mut Criterion) {
                 );
             });
 
-            // Effectiveness stats (50 iterations)
+            // Effectiveness stats (100 iterations)
             let mut aggregate = AggregateStats::default();
-            for _ in 0..50 {
+            for _ in 0..100 {
                 let mut board = Board::new(width, height, mines).unwrap();
                 let game_stats = solve_single_game(&mut board, chain.as_ref());
                 aggregate.games.push(game_stats);
