@@ -45,6 +45,10 @@ impl<'a> SolverBoard<'a> {
     pub fn iter_positions(&self) -> BoardIterator {
         self.board.iter_positions()
     }
+
+    pub fn total_cells(&self) -> u32 {
+        self.board.total_cells()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

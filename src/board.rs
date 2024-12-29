@@ -196,6 +196,10 @@ impl Board {
     pub fn revealed_count(&self) -> u32 {
         self.revealed_count
     }
+
+    pub fn total_cells(&self) -> u32 {
+        self.width * self.height
+    }
 }
 
 #[cfg(test)]
