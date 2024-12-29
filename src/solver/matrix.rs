@@ -1,9 +1,10 @@
-use crate::solver::{Certainty, Solver};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+// Removed unused ndarray imports
 
-use super::{board::SolverCell, SolverAction, SolverBoard, SolverResult};
+use super::{board::SolverCell, Certainty, Solver, SolverAction, SolverBoard, SolverResult};
 use crate::Position;
 
+/// Represents a system of linear equations for solving Minesweeper constraints
 #[derive(Debug)]
 struct LinearSystem {
     // Each row represents an equation where coefficients[i][j] * x_j + ... = constants[i]
@@ -34,6 +35,8 @@ impl LinearSystem {
         self.constants.push(constant);
     }
 
+    /// Solves the system using Gaussian elimination with partial pivoting
+    /// Returns a vector of (Position, is_mine) pairs for squares that can be definitively determined
     fn solve(&self) -> Vec<(Position, bool)> {
         let mut results = Vec::new();
         if self.coefficients.is_empty() || self.inv_variables.is_empty() {
@@ -45,9 +48,8 @@ impl LinearSystem {
         let n = matrix.len();
         let m = self.inv_variables.len();
 
-        // Gaussian elimination
+        // Gaussian elimination with partial pivoting
         for i in 0..n.min(m) {
-            // Only go up to the smaller dimension
             // Find pivot in column i
             let mut max_val = 0.0;
             let mut max_row = i;
@@ -89,24 +91,29 @@ impl LinearSystem {
             }
         }
 
-        // Special analysis for minesweeper constraints:
-        // Look for rows that have been reduced to certainties
+        // Analyze results for minesweeper-specific constraints
         for i in 0..n {
+            // Count non-zero coefficients in this row
             let mut single_var = None;
             let mut var_count = 0;
+            let mut all_ones = true;
+            let mut vars = Vec::new();
 
-            // Count non-zero coefficients in this row
             for j in 0..m {
                 if matrix[i][j].abs() > 1e-10 {
                     var_count += 1;
                     single_var = Some(j);
+                    if (matrix[i][j] - 1.0).abs() > 1e-10 {
+                        all_ones = false;
+                    }
+                    vars.push(j);
                 }
             }
 
+            // Case 1: Single variable equations
             if var_count == 1 {
                 if let Some(j) = single_var {
                     let value = constants[i].round() as i32;
-                    // Only consider 0 or 1 as valid solutions (since cells must be mines or not mines)
                     if value == 0 || value == 1 {
                         let pos = self.inv_variables[j];
                         results.push((pos, value == 1));
@@ -114,33 +121,19 @@ impl LinearSystem {
                 }
             }
 
-            // Look for special cases like all coefficients = 1 and sum = 0 (all safe) or
-            // all coefficients = 1 and sum = number of variables (all mines)
-            if var_count > 1 {
-                let mut all_ones = true;
-                let mut vars = Vec::new();
-                for j in 0..m {
-                    if matrix[i][j].abs() > 1e-10 {
-                        if (matrix[i][j] - 1.0).abs() > 1e-10 {
-                            all_ones = false;
-                            break;
-                        }
-                        vars.push(j);
+            // Case 2: Special cases with all ones
+            if var_count > 1 && all_ones {
+                if constants[i].abs() < 1e-10 {
+                    // All variables must be 0 (safe)
+                    for j in vars {
+                        let pos = self.inv_variables[j];
+                        results.push((pos, false));
                     }
-                }
-                if all_ones {
-                    if constants[i].abs() < 1e-10 {
-                        // All variables in this equation must be 0 (safe)
-                        for j in vars {
-                            let pos = self.inv_variables[j];
-                            results.push((pos, false));
-                        }
-                    } else if (constants[i] - vars.len() as f64).abs() < 1e-10 {
-                        // All variables in this equation must be 1 (mines)
-                        for j in vars {
-                            let pos = self.inv_variables[j];
-                            results.push((pos, true));
-                        }
+                } else if (constants[i] - vars.len() as f64).abs() < 1e-10 {
+                    // All variables must be 1 (mines)
+                    for j in vars {
+                        let pos = self.inv_variables[j];
+                        results.push((pos, true));
                     }
                 }
             }
@@ -150,62 +143,151 @@ impl LinearSystem {
     }
 }
 
+/// Represents a connected component in the Minesweeper board
+#[derive(Debug)]
+struct Component {
+    positions: HashSet<Position>,
+    constraints: Vec<(Position, u8)>, // Position and value of constraining numbers
+}
+
 pub struct MatrixSolver;
 
 impl MatrixSolver {
-    fn build_system(&self, board: &SolverBoard) -> LinearSystem {
-        let mut system = LinearSystem::new();
-        let mut var_idx = 0;
+    /// Identifies connected components in the board
+    fn find_components(&self, board: &SolverBoard) -> Vec<Component> {
+        let mut components = Vec::new();
+        let mut visited = HashSet::new();
 
-        // First pass: identify and map all unknown variables
-        for pos in board.iter_positions() {
-            if let Some(SolverCell::Covered) = board.get(pos) {
-                system.variables.insert(pos, var_idx);
-                system.inv_variables.push(pos);
-                var_idx += 1;
+        // Helper function for DFS component finding
+        fn explore_component(
+            pos: Position,
+            board: &SolverBoard,
+            component: &mut Component,
+            visited: &mut HashSet<Position>,
+        ) {
+            if !visited.insert(pos) {
+                return;
             }
-        }
 
-        // If no variables, return empty system
-        if var_idx == 0 {
-            return system;
-        }
-
-        // Second pass: build equations from revealed numbers
-        for pos in board.iter_positions() {
-            if let Some(SolverCell::Revealed(n)) = board.get(pos) {
-                let mut coeffs = vec![0.0; var_idx];
-                let mut constant = n as f64;
-                let mut has_unknowns = false;
-
-                // Check each neighbor
-                for npos in board.neighbors(pos) {
-                    match board.get(npos) {
-                        Some(SolverCell::Covered) => {
-                            let idx = system.variables[&npos];
-                            coeffs[idx] = 1.0;
-                            has_unknowns = true;
+            match board.get(pos) {
+                Some(SolverCell::Covered) => {
+                    component.positions.insert(pos);
+                    // Explore neighbors to find connecting constraints
+                    for npos in board.neighbors(pos) {
+                        if let Some(SolverCell::Revealed(n)) = board.get(npos) {
+                            component.constraints.push((npos, n));
+                            // Continue exploration from constrained squares
+                            for nnpos in board.neighbors(npos) {
+                                if !visited.contains(&nnpos) {
+                                    explore_component(nnpos, board, component, visited);
+                                }
+                            }
                         }
-                        Some(SolverCell::Flagged) => {
-                            constant -= 1.0;
-                        }
-                        _ => {}
                     }
                 }
+                Some(SolverCell::Revealed(n)) => {
+                    component.constraints.push((pos, n));
+                    // Explore neighbors for covered squares
+                    for npos in board.neighbors(pos) {
+                        if !visited.contains(&npos) {
+                            explore_component(npos, board, component, visited);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
 
-                // Only add equation if it involves unknown variables
-                if has_unknowns {
-                    system.add_equation(coeffs, constant);
+        // Find all components
+        for pos in board.iter_positions() {
+            if !visited.contains(&pos) {
+                if let Some(SolverCell::Covered) = board.get(pos) {
+                    let mut component = Component {
+                        positions: HashSet::new(),
+                        constraints: Vec::new(),
+                    };
+                    explore_component(pos, board, &mut component, &mut visited);
+                    if !component.positions.is_empty() {
+                        components.push(component);
+                    }
                 }
             }
         }
 
-        // Add global mine count constraint if we have it
-        let remaining_mines = board.total_mines() - board.mines_marked();
-        if remaining_mines > 0 && var_idx > 0 {
-            let coeffs = vec![1.0; var_idx];
-            system.add_equation(coeffs, remaining_mines as f64);
+        // Merge components that share constraints
+        let mut i = 0;
+        while i < components.len() {
+            let mut merged = false;
+            let component_i_constraints: HashSet<_> = components[i]
+                .constraints
+                .iter()
+                .map(|&(pos, _)| pos)
+                .collect();
+
+            let mut j = i + 1;
+            while j < components.len() {
+                // Check if components share any constraints
+                let shares_constraint = components[j]
+                    .constraints
+                    .iter()
+                    .any(|&(pos, _)| component_i_constraints.contains(&pos));
+
+                if shares_constraint {
+                    // Take ownership of component j
+                    let component_j = components.remove(j);
+                    // Merge into component i
+                    components[i].positions.extend(component_j.positions);
+                    components[i].constraints.extend(component_j.constraints);
+                    merged = true;
+                } else {
+                    j += 1;
+                }
+            }
+
+            if !merged {
+                i += 1;
+            }
         }
+
+        components
+    }
+
+    /// Builds a linear system for a single component
+    fn build_component_system(&self, board: &SolverBoard, component: &Component) -> LinearSystem {
+        let mut system = LinearSystem::new();
+
+        // Create variables for each unknown square
+        for (idx, &pos) in component.positions.iter().enumerate() {
+            system.variables.insert(pos, idx);
+            system.inv_variables.push(pos);
+        }
+
+        // Add equations from constraints
+        for &(pos, value) in &component.constraints {
+            let mut coeffs = vec![0.0; system.inv_variables.len()];
+            let mut constant = value as f64;
+
+            // Count existing flags and build equation
+            for npos in board.neighbors(pos) {
+                match board.get(npos) {
+                    Some(SolverCell::Covered) if component.positions.contains(&npos) => {
+                        coeffs[system.variables[&npos]] = 1.0;
+                    }
+                    Some(SolverCell::Flagged) => {
+                        constant -= 1.0;
+                    }
+                    _ => {}
+                }
+            }
+
+            system.add_equation(coeffs, constant);
+        }
+
+        // Add global mine count constraint
+        let total_mines = board.total_mines();
+        let remaining_mines = total_mines - board.mines_marked();
+        let coeffs = vec![1.0; system.inv_variables.len()];
+        system.add_equation(coeffs, remaining_mines as f64);
 
         system
     }
@@ -213,21 +295,26 @@ impl MatrixSolver {
 
 impl Solver for MatrixSolver {
     fn solve(&self, board: &SolverBoard) -> SolverResult {
-        // Build and solve linear system
-        let system = self.build_system(board);
-        let solutions = system.solve();
+        let mut actions = Vec::new();
 
-        // Convert solutions to actions
-        let actions = solutions
-            .into_iter()
-            .map(|(pos, is_mine)| {
-                if is_mine {
+        // Find all components
+        let components = self.find_components(board);
+
+        // Solve each component
+        for component in components {
+            let system = self.build_component_system(board, &component);
+            let solutions = system.solve();
+
+            // Convert solutions to actions
+            for (pos, is_mine) in solutions {
+                let action = if is_mine {
                     SolverAction::Flag(pos)
                 } else {
                     SolverAction::Reveal(pos)
-                }
-            })
-            .collect();
+                };
+                actions.push(action);
+            }
+        }
 
         SolverResult {
             actions,
@@ -237,5 +324,66 @@ impl Solver for MatrixSolver {
 
     fn name(&self) -> &str {
         "Matrix Equation Solver"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Board;
+
+    #[test]
+    fn test_simple_component() {
+        let mut board = Board::new(3, 3, 1).unwrap();
+        // Set up a simple board with one known mine
+        board.reveal(Position::new(1, 1)).unwrap();
+
+        let solver_board = SolverBoard::new(&board);
+        let solver = MatrixSolver;
+        let components = solver.find_components(&solver_board);
+
+        assert_eq!(components.len(), 1);
+        let component = &components[0];
+        assert!(component.positions.contains(&Position::new(0, 0)));
+        assert!(component
+            .constraints
+            .iter()
+            .any(|&(pos, _)| pos == Position::new(1, 1)));
+    }
+
+    #[test]
+    fn test_linear_system_solution() {
+        let mut system = LinearSystem::new();
+
+        // Add test equations
+        system.inv_variables.push(Position::new(0, 0));
+        system.inv_variables.push(Position::new(0, 1));
+        system.variables.insert(Position::new(0, 0), 0);
+        system.variables.insert(Position::new(0, 1), 1);
+
+        system.add_equation(vec![1.0, 1.0], 1.0); // x + y = 1
+        system.add_equation(vec![1.0, 0.0], 1.0); // x = 1
+
+        let solutions = system.solve();
+        assert_eq!(solutions.len(), 2);
+        assert!(solutions.contains(&(Position::new(0, 0), true)));
+        assert!(solutions.contains(&(Position::new(0, 1), false)));
+    }
+
+    #[test]
+    fn test_merge_components() {
+        let mut board = Board::new(4, 4, 2).unwrap();
+        // Create two components that should be merged
+        board.reveal(Position::new(1, 1)).unwrap();
+        board.reveal(Position::new(2, 1)).unwrap();
+
+        let solver_board = SolverBoard::new(&board);
+        let solver = MatrixSolver;
+        let components = solver.find_components(&solver_board);
+
+        // Should be merged into a single component due to shared constraints
+        assert_eq!(components.len(), 1);
+        let component = &components[0];
+        assert!(component.constraints.len() >= 2);
     }
 }
