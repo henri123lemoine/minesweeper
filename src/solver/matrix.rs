@@ -36,21 +36,22 @@ impl LinearSystem {
 
     fn solve(&self) -> Vec<(Position, bool)> {
         let mut results = Vec::new();
-        if self.coefficients.is_empty() {
+        if self.coefficients.is_empty() || self.inv_variables.is_empty() {
             return results;
         }
 
         let mut matrix = self.coefficients.clone();
         let mut constants = self.constants.clone();
         let n = matrix.len();
-        let m = matrix[0].len();
+        let m = self.inv_variables.len();
 
         // Gaussian elimination
-        for i in 0..n {
-            // Find pivot
-            let mut max_val = matrix[i][i].abs();
+        for i in 0..n.min(m) {
+            // Only go up to the smaller dimension
+            // Find pivot in column i
+            let mut max_val = 0.0;
             let mut max_row = i;
-            for j in (i + 1)..n {
+            for j in i..n {
                 let abs_val = matrix[j][i].abs();
                 if abs_val > max_val {
                     max_val = abs_val;
