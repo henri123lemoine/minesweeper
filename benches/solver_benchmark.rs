@@ -283,10 +283,17 @@ fn create_solver_chains() -> Vec<(Box<dyn Solver>, &'static str)> {
 fn benchmark_solver_chains(c: &mut Criterion) {
     let mut group = c.benchmark_group("Solver Chains");
 
+    if std::env::var("QUICK_BENCH").is_ok() {
+        group
+            .warm_up_time(Duration::from_millis(100))
+            .measurement_time(Duration::from_secs(1))
+            .sample_size(50);
+    }
+
     let test_configs = vec![
-        (8, 8, 10), // Beginner
-                    // (16, 16, 40), // Intermediate
-                    // (30, 16, 99), // Expert
+        (8, 8, 10),   // Beginner
+        (16, 16, 40), // Intermediate
+        (30, 16, 99), // Expert
     ];
 
     let solver_chains = create_solver_chains();
