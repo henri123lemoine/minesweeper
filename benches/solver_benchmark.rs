@@ -65,27 +65,52 @@ fn solve_single_game(board: &mut Board, solver: &dyn Solver) -> GameStats {
     let mut stats = GameStats::default();
     let total_safe_cells = (board.dimensions().0 * board.dimensions().1) - board.mines_count();
 
-    // Make initial move at (1,1)
-    if let Ok(Cell::Hidden(is_mine)) = board.get_cell(Position::new(1, 1)) {
-        if *is_mine {
-            stats.lost = true;
-            stats.mines_hit = 1;
-            return stats;
+    // Create a list of safe starting positions to try
+    let starting_positions = vec![
+        Position::new(0, 0),
+        Position::new(1, 1),
+        Position::new(2, 2),
+        Position::new(
+            board.dimensions().0 as i32 / 2,
+            board.dimensions().1 as i32 / 2,
+        ),
+    ];
+
+    // Try each starting position until we find a safe one
+    let mut started = false;
+    for pos in starting_positions {
+        if let Ok(Cell::Hidden(is_mine)) = board.get_cell(pos) {
+            if !is_mine {
+                let _ = board.reveal(pos);
+                started = true;
+                stats.safe_moves += 1;
+                break;
+            }
         }
     }
-    let _ = board.reveal(Position::new(1, 1));
+
+    if !started {
+        stats.lost = true;
+        stats.mines_hit += 1;
+        return stats;
+    }
 
     // Keep solving until we can't make progress or hit a mine
-    for _ in 0..200 {
-        // Increased move limit
+    let mut previous_revealed = 0;
+    let mut stall_count = 0;
+
+    while stall_count < 3 {
+        // Allow a few attempts to break through stuck positions
         let solver_board = SolverBoard::new(board);
         let result = solver.solve(&solver_board);
 
         if result.actions.is_empty() {
-            break;
+            stall_count += 1;
+            continue;
         }
 
         stats.moves_made += 1;
+        let mut made_progress = false;
 
         for action in result.actions {
             match action {
@@ -97,13 +122,33 @@ fn solve_single_game(board: &mut Board, solver: &dyn Solver) -> GameStats {
                             return stats;
                         } else {
                             stats.safe_moves += 1;
+                            let _ = board.reveal(pos);
+                            made_progress = true;
                         }
                     }
-                    let _ = board.reveal(pos);
                 }
-                SolverAction::Flag(_) => {}
+                SolverAction::Flag(pos) => {
+                    if let Ok(Cell::Hidden(is_mine)) = board.get_cell(pos) {
+                        if *is_mine {
+                            let _ = board.toggle_flag(pos);
+                            made_progress = true;
+                        } else {
+                            // Incorrectly flagging a safe cell should count as a loss
+                            stats.lost = true;
+                            return stats;
+                        }
+                    }
+                }
             }
         }
+
+        let current_revealed = board.revealed_count();
+        if current_revealed == previous_revealed && !made_progress {
+            stall_count += 1;
+        } else {
+            stall_count = 0;
+        }
+        previous_revealed = current_revealed;
 
         // Check if we've won
         if board.revealed_count() == total_safe_cells {
