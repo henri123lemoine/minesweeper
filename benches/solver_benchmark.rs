@@ -257,15 +257,15 @@ fn create_solver_chains() -> Vec<(Box<dyn Solver>, &'static str)> {
             "Counting + Matrix",
         ),
         // Matrix + Probabilistic
-        (
-            Box::new(ChainSolver::new(vec![
-                Box::new(CountingSolver),
-                Box::new(ProbabilisticSolver {
-                    min_confidence: 0.95,
-                }),
-            ])),
-            "Counting + Probabilistic",
-        ),
+        // (
+        //     Box::new(ChainSolver::new(vec![
+        //         Box::new(CountingSolver),
+        //         Box::new(ProbabilisticSolver {
+        //             min_confidence: 0.95,
+        //         }),
+        //     ])),
+        //     "Counting + Probabilistic",
+        // ),
         // FULL CHAIN //
         // (
         //     Box::new(ChainSolver::new(vec![
