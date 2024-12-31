@@ -1,5 +1,5 @@
-use itertools::Itertools;
-use ndarray::{Array2, Axis};
+// use itertools::Itertools;
+// use ndarray::{Array2, Axis};
 use std::collections::{HashMap, HashSet};
 
 use super::{board::SolverCell, Certainty, Solver, SolverAction, SolverBoard, SolverResult};
@@ -153,7 +153,6 @@ impl ProbabilisticSolver {
 
     fn calculate_area_probabilities(
         &self,
-        board: &SolverBoard,
         areas: &[ConstraintArea],
         total_mines_left: u32,
     ) -> HashMap<Position, f64> {
@@ -291,7 +290,7 @@ impl Solver for ProbabilisticSolver {
         // Calculate probabilities for each component
         for component in components {
             let areas = self.get_areas(board, &component);
-            let probs = self.calculate_area_probabilities(board, &areas, remaining_mines);
+            let probs = self.calculate_area_probabilities(&areas, remaining_mines);
             all_probabilities.extend(probs);
         }
 
@@ -345,6 +344,10 @@ impl Solver for ProbabilisticSolver {
 
     fn name(&self) -> &str {
         "Probabilistic Solver"
+    }
+
+    fn is_deterministic(&self) -> bool {
+        false
     }
 }
 

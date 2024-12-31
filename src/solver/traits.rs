@@ -22,4 +22,5 @@ pub enum Certainty {
 pub trait Solver {
     fn solve(&self, board: &SolverBoard) -> SolverResult;
     fn name(&self) -> &str;
+    fn is_deterministic(&self) -> bool;
 }

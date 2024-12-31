@@ -232,51 +232,59 @@ fn create_solver_chains() -> Vec<(Box<dyn Solver>, &'static str)> {
         // SINGLE //
         // Counting
         (
-            Box::new(ChainSolver::new(vec![Box::new(CountingSolver)])),
+            Box::new(ChainSolver::new(vec![Box::new(CountingSolver)]).unwrap()),
             "Counting Only",
         ),
         // Matrix
         (
-            Box::new(ChainSolver::new(vec![Box::new(MatrixSolver)])),
+            Box::new(ChainSolver::new(vec![Box::new(MatrixSolver)]).unwrap()),
             "Matrix Only",
         ),
         // Probabilistic
-        // (
-        //     Box::new(ChainSolver::new(vec![Box::new(ProbabilisticSolver {
-        //         min_confidence: 0.95,
-        //     })])),
-        //     "Probabilistic Only",
-        // ),
+        (
+            Box::new(
+                ChainSolver::new(vec![Box::new(ProbabilisticSolver {
+                    min_confidence: 0.95,
+                })])
+                .unwrap(),
+            ),
+            "Probabilistic Only",
+        ),
         // CHAINS //
         // Counting + Matrix
         (
-            Box::new(ChainSolver::new(vec![
-                Box::new(CountingSolver),
-                Box::new(MatrixSolver),
-            ])),
+            Box::new(
+                ChainSolver::new(vec![Box::new(CountingSolver), Box::new(MatrixSolver)]).unwrap(),
+            ),
             "Counting + Matrix",
         ),
         // Matrix + Probabilistic
-        // (
-        //     Box::new(ChainSolver::new(vec![
-        //         Box::new(CountingSolver),
-        //         Box::new(ProbabilisticSolver {
-        //             min_confidence: 0.95,
-        //         }),
-        //     ])),
-        //     "Counting + Probabilistic",
-        // ),
+        (
+            Box::new(
+                ChainSolver::new(vec![
+                    Box::new(CountingSolver),
+                    Box::new(ProbabilisticSolver {
+                        min_confidence: 0.95,
+                    }),
+                ])
+                .unwrap(),
+            ),
+            "Counting + Probabilistic",
+        ),
         // FULL CHAIN //
-        // (
-        //     Box::new(ChainSolver::new(vec![
-        //         Box::new(CountingSolver),
-        //         Box::new(MatrixSolver),
-        //         Box::new(ProbabilisticSolver {
-        //             min_confidence: 0.95,
-        //         }),
-        //     ])),
-        //     "Full Chain",
-        // ),
+        (
+            Box::new(
+                ChainSolver::new(vec![
+                    Box::new(CountingSolver),
+                    Box::new(MatrixSolver),
+                    Box::new(ProbabilisticSolver {
+                        min_confidence: 0.95,
+                    }),
+                ])
+                .unwrap(),
+            ),
+            "Full Chain",
+        ),
     ]
 }
 

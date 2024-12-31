@@ -11,7 +11,7 @@ pub use probabilistic::ProbabilisticSolver;
 pub use traits::{Certainty, Solver, SolverAction, SolverResult};
 
 // Factory method for creating a full solver chain
-pub fn create_full_solver() -> impl Solver {
+pub fn create_full_solver() -> Result<impl Solver, &'static str> {
     ChainSolver::new(vec![
         Box::new(CountingSolver),
         Box::new(MatrixSolver),
@@ -27,8 +27,19 @@ pub struct ChainSolver {
 }
 
 impl ChainSolver {
-    pub fn new(solvers: Vec<Box<dyn Solver>>) -> Self {
-        Self { solvers }
+    pub fn new(solvers: Vec<Box<dyn Solver>>) -> Result<Self, &'static str> {
+        // Validate solver ordering: deterministic solvers must come before probabilistic
+        let mut seen_probabilistic = false;
+        for solver in &solvers {
+            if solver.is_deterministic() {
+                if seen_probabilistic {
+                    return Err("Invalid solver chain: deterministic solver found after probabilistic solver");
+                }
+            } else {
+                seen_probabilistic = true;
+            }
+        }
+        Ok(Self { solvers })
     }
 }
 
@@ -48,5 +59,9 @@ impl Solver for ChainSolver {
 
     fn name(&self) -> &str {
         "Chain Solver"
+    }
+
+    fn is_deterministic(&self) -> bool {
+        self.solvers.iter().all(|s| s.is_deterministic())
     }
 }

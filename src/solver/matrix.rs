@@ -470,6 +470,10 @@ impl Solver for MatrixSolver {
     fn name(&self) -> &str {
         "Matrix Equation Solver"
     }
+
+    fn is_deterministic(&self) -> bool {
+        true
+    }
 }
 
 #[cfg(test)]

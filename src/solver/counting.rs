@@ -86,4 +86,8 @@ impl Solver for CountingSolver {
     fn name(&self) -> &str {
         "Basic Counting Solver"
     }
+
+    fn is_deterministic(&self) -> bool {
+        true
+    }
 }
