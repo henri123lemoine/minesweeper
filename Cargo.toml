@@ -4,13 +4,19 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-itertools = "0.13.0"
+darling = "0.20.10"
+itertools = "0.14.0"
 ndarray = "0.16.1"
+proc-macro2 = "1.0.92"
+quote = "1.0.38"
 rand = "0.8.5"
+syn = { version = "2.0.93", features = ["full", "extra-traits"] }
 thiserror = "2.0.9"
 
 [dev-dependencies]
 criterion = "0.5.1"
+trybuild = "1.0"
+minesweeper-solver-derive = { path = "./solver-derive" }
 
 [[bench]]
 name = "solver_benchmark"
