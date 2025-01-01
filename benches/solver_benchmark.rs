@@ -233,26 +233,21 @@ fn create_solver_chains() -> Vec<(Box<dyn Solver>, &'static str)> {
         // Counting
         (
             Box::new(ChainSolver::new(vec![Box::new(CountingSolver)]).unwrap()),
-            "Counting Only",
+            "Counting Solver",
         ),
         // Matrix
         (
             Box::new(ChainSolver::new(vec![Box::new(MatrixSolver)]).unwrap()),
-            "Matrix Only",
+            "Matrix Solver",
         ),
-        // Probabilistic
+        // Tank
         (
             Box::new(
-                ChainSolver::new(vec![Box::new(ProbabilisticSolver {
+                ChainSolver::new(vec![Box::new(TankSolver {
                     min_confidence: 0.95,
                 })])
                 .unwrap(),
             ),
-            "Probabilistic Only",
-        ),
-        // Tank
-        (
-            Box::new(ChainSolver::new(vec![Box::new(TankSolver::default())]).unwrap()),
             "Tank Solver",
         ),
         // CHAINS //
@@ -261,20 +256,20 @@ fn create_solver_chains() -> Vec<(Box<dyn Solver>, &'static str)> {
             Box::new(
                 ChainSolver::new(vec![Box::new(CountingSolver), Box::new(MatrixSolver)]).unwrap(),
             ),
-            "Counting + Matrix",
+            "Counting + Matrix Chain Solver",
         ),
-        // Matrix + Probabilistic
+        // Matrix + Tank
         (
             Box::new(
                 ChainSolver::new(vec![
-                    Box::new(CountingSolver),
-                    Box::new(ProbabilisticSolver {
+                    Box::new(MatrixSolver),
+                    Box::new(TankSolver {
                         min_confidence: 0.95,
                     }),
                 ])
                 .unwrap(),
             ),
-            "Counting + Probabilistic",
+            "Matrix + Tank Chain Solver",
         ),
         // FULL CHAIN //
         (
@@ -282,13 +277,13 @@ fn create_solver_chains() -> Vec<(Box<dyn Solver>, &'static str)> {
                 ChainSolver::new(vec![
                     Box::new(CountingSolver),
                     Box::new(MatrixSolver),
-                    Box::new(ProbabilisticSolver {
+                    Box::new(TankSolver {
                         min_confidence: 0.95,
                     }),
                 ])
                 .unwrap(),
             ),
-            "Full Chain",
+            "Full (Counting + Matrix + Tank) Chain",
         ),
     ]
 }

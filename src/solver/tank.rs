@@ -10,7 +10,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 /// https://www.chiark.greenend.org.uk/~sgtatham/mines/#solve
 #[derive(SolverTest)]
 pub struct TankSolver {
-    min_confidence: f64,
+    pub min_confidence: f64,
 }
 
 impl Default for TankSolver {
