@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use super::{board::SolverCell, Certainty, Solver, SolverAction, SolverBoard, SolverResult};
 use crate::Position;
+use minesweeper_solver_derive::SolverTest;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Ordering {
@@ -287,7 +288,14 @@ struct Component {
     constraints: Vec<(Position, u8)>,
 }
 
+#[derive(SolverTest)]
 pub struct MatrixSolver;
+
+impl Default for MatrixSolver {
+    fn default() -> Self {
+        Self
+    }
+}
 
 impl MatrixSolver {
     fn find_components(&self, board: &SolverBoard) -> Vec<Component> {

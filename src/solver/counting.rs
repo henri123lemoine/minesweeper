@@ -2,12 +2,20 @@ use super::board::{SolverBoard, SolverCell};
 use super::traits::{Certainty, Solver, SolverAction};
 use super::SolverResult;
 use crate::Position;
+use minesweeper_solver_derive::SolverTest;
 
 /// Implements basic counting rules for minesweeper solving:
 /// - If a numbered cell has exactly as many hidden neighbors as its number, they must all be mines
 /// - If a numbered cell has exactly as many flagged neighbors as its number, all other neighbors must be safe
 /// - Any neighbor of a 0 is safe
+#[derive(SolverTest)]
 pub struct CountingSolver;
+
+impl Default for CountingSolver {
+    fn default() -> Self {
+        Self
+    }
+}
 
 impl CountingSolver {
     fn analyze_cell(&self, board: &SolverBoard, pos: Position) -> Vec<SolverAction> {

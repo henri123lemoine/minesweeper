@@ -1,5 +1,6 @@
 // use itertools::Itertools;
 // use ndarray::{Array2, Axis};
+use minesweeper_solver_derive::SolverTest;
 use std::collections::{HashMap, HashSet};
 
 use super::{board::SolverCell, Certainty, Solver, SolverAction, SolverBoard, SolverResult};
@@ -11,8 +12,17 @@ struct ConstraintArea {
     mine_count: u8,
 }
 
+#[derive(SolverTest)]
 pub struct ProbabilisticSolver {
     pub min_confidence: f64,
+}
+
+impl Default for ProbabilisticSolver {
+    fn default() -> Self {
+        Self {
+            min_confidence: 0.95,
+        }
+    }
 }
 
 impl ProbabilisticSolver {
