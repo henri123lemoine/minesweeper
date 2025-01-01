@@ -96,10 +96,31 @@ impl TankSolver {
                 probabilities.insert(pos, prob);
                 queue.push_back(pos);
                 processed.insert(pos);
+            } else {
+                // For multi-position constraints, initialize with uniform probability
+                let prob = constraint.mines_required as f64 / constraint.positions.len() as f64;
+                for &pos in &constraint.positions {
+                    if !processed.contains(&pos) {
+                        probabilities.insert(pos, prob);
+                        queue.push_back(pos);
+                        processed.insert(pos);
+                    }
+                }
             }
         }
 
-        // Flood fill probabilities
+        // If we have no probabilities yet but do have constraints, initialize them
+        if probabilities.is_empty() && !constraints.is_empty() {
+            let first_constraint = &constraints[0];
+            let prob =
+                first_constraint.mines_required as f64 / first_constraint.positions.len() as f64;
+            for &pos in &first_constraint.positions {
+                probabilities.insert(pos, prob);
+                queue.push_back(pos);
+                processed.insert(pos);
+            }
+        }
+
         while let Some(pos) = queue.pop_front() {
             let prob = *probabilities.get(&pos).unwrap();
 
@@ -161,12 +182,26 @@ impl Solver for TankSolver {
                     (width / 2) as i32,
                     (height / 2) as i32,
                 ))],
-                certainty: Certainty::Probabilistic(0.9), // Conservative estimate for first move
+                certainty: Certainty::Probabilistic(0.9),
             };
         }
 
         // Get constraints and calculate probabilities
         let constraints = self.get_constraints(board);
+
+        // If we have no constraints but uncovered squares, pick one at random
+        if constraints.is_empty() {
+            if let Some(pos) = board
+                .iter_positions()
+                .find(|&pos| matches!(board.get(pos), Some(SolverCell::Covered)))
+            {
+                return SolverResult {
+                    actions: vec![SolverAction::Reveal(pos)],
+                    certainty: Certainty::Probabilistic(0.5),
+                };
+            }
+        }
+
         let probabilities = self.flood_probability(&constraints);
 
         // Find best move
@@ -186,10 +221,23 @@ impl Solver for TankSolver {
         }
 
         // Only return action if we meet confidence threshold
-        if best_certainty >= self.min_confidence {
+        if let Some(action) = best_action {
+            if best_certainty >= self.min_confidence {
+                return SolverResult {
+                    actions: vec![action],
+                    certainty: Certainty::Probabilistic(best_certainty),
+                };
+            }
+        }
+
+        // If we get here and still have no action but have covered squares, pick one
+        if let Some(pos) = board
+            .iter_positions()
+            .find(|&pos| matches!(board.get(pos), Some(SolverCell::Covered)))
+        {
             SolverResult {
-                actions: vec![best_action.unwrap()],
-                certainty: Certainty::Probabilistic(best_certainty),
+                actions: vec![SolverAction::Reveal(pos)],
+                certainty: Certainty::Probabilistic(0.5),
             }
         } else {
             SolverResult {
