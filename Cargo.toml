@@ -12,11 +12,11 @@ quote = "1.0.38"
 rand = "0.8.5"
 syn = { version = "2.0.93", features = ["full", "extra-traits"] }
 thiserror = "2.0.9"
+minesweeper-solver-derive = { path = "./solver-derive" }
 
 [dev-dependencies]
 criterion = "0.5.1"
 trybuild = "1.0"
-minesweeper-solver-derive = { path = "./solver-derive" }
 
 [[bench]]
 name = "solver_benchmark"
