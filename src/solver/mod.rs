@@ -2,6 +2,7 @@ mod board;
 mod counting;
 mod matrix;
 mod probabilistic;
+mod tank;
 mod traits;
 
 pub use board::SolverBoard;
