@@ -181,7 +181,7 @@ fn create_solvers() -> Vec<(Box<dyn Solver>, &'static str)> {
             Box::new(ChainSolver::new(vec![Box::new(MatrixSolver)]).unwrap()),
             "Matrix Solver",
         ),
-        // Tank
+        // Tank 95%
         (
             Box::new(
                 ChainSolver::new(vec![Box::new(TankSolver {
@@ -189,7 +189,17 @@ fn create_solvers() -> Vec<(Box<dyn Solver>, &'static str)> {
                 })])
                 .unwrap(),
             ),
-            "Tank Solver",
+            "Tank Solver 95%",
+        ),
+        // Tank 99%
+        (
+            Box::new(
+                ChainSolver::new(vec![Box::new(TankSolver {
+                    min_confidence: 0.99,
+                })])
+                .unwrap(),
+            ),
+            "Tank Solver 99%",
         ),
         // CHAINS //
         // Counting + Matrix
@@ -240,8 +250,8 @@ fn benchmark_solvers(c: &mut Criterion) {
     }
 
     let test_configs = vec![
-        (8, 8, 10),   // Beginner
-        (16, 16, 40), // Intermediate
+        // (8, 8, 10),   // Beginner
+        // (16, 16, 40), // Intermediate
         (30, 16, 99), // Expert
     ];
 
@@ -280,6 +290,7 @@ fn benchmark_solvers(c: &mut Criterion) {
             );
             println!("Average moves per game: {:.1}", aggregate.average_moves());
             println!("Total safe moves: {}", aggregate.total_safe_moves());
+            println!("Total mines hit: {}", aggregate.total_mines_hit());
             println!("Games played: {}", aggregate.games_played());
 
             // Note: Detailed timing analysis would need to be handled separately
