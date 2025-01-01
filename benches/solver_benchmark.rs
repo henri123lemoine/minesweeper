@@ -2,7 +2,7 @@ use criterion::{criterion_group, criterion_main, Criterion};
 use minesweeper::{
     solver::{
         ChainSolver, CountingSolver, MatrixSolver, ProbabilisticSolver, Solver, SolverAction,
-        SolverBoard,
+        SolverBoard, TankSolver,
     },
     Board, Cell, Position,
 };
@@ -249,6 +249,11 @@ fn create_solver_chains() -> Vec<(Box<dyn Solver>, &'static str)> {
                 .unwrap(),
             ),
             "Probabilistic Only",
+        ),
+        // Tank
+        (
+            Box::new(ChainSolver::new(vec![Box::new(TankSolver::default())]).unwrap()),
+            "Tank Solver",
         ),
         // CHAINS //
         // Counting + Matrix

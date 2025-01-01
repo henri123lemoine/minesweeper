@@ -10,5 +10,5 @@ pub use game::{Action, Game, GameState};
 pub use position::Position;
 pub use solver::{
     create_full_solver, Certainty, CountingSolver, MatrixSolver, ProbabilisticSolver, Solver,
-    SolverAction, SolverBoard, SolverResult,
+    SolverAction, SolverBoard, SolverResult, TankSolver,
 };

@@ -9,6 +9,7 @@ pub use board::SolverBoard;
 pub use counting::CountingSolver;
 pub use matrix::MatrixSolver;
 pub use probabilistic::ProbabilisticSolver;
+pub use tank::TankSolver;
 pub use traits::{Certainty, Solver, SolverAction, SolverResult};
 
 // Factory method for creating a full solver chain
