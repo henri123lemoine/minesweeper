@@ -168,66 +168,7 @@ fn solve_single_game(board: &mut Board, solver: &dyn Solver) -> GameStats {
     stats
 }
 
-fn benchmark_solvers(c: &mut Criterion) {
-    let mut group = c.benchmark_group("Solvers");
-
-    let test_configs = vec![
-        (8, 8, 10),   // Beginner
-        (16, 16, 40), // Intermediate
-        (30, 16, 99), // Expert
-    ];
-
-    let solvers: Vec<(&dyn Solver, &str)> = vec![
-        (&CountingSolver, "Counting"),
-        (&MatrixSolver, "Matrix"),
-        (
-            &ProbabilisticSolver {
-                min_confidence: 0.95,
-            },
-            "Probabilistic",
-        ),
-    ];
-
-    for (width, height, mines) in test_configs {
-        let board_size = (width * height) as usize;
-
-        for (solver, name) in &solvers {
-            // Performance benchmark
-            group.bench_function(format!("{} {}x{}", name, width, height), |b| {
-                b.iter_with_setup(
-                    || Board::new(width, height, mines).unwrap(),
-                    |mut board| {
-                        let stats = solve_single_game(&mut board, *solver);
-                        criterion::black_box(stats)
-                    },
-                );
-            });
-
-            // Effectiveness stats (50 iterations)
-            let mut aggregate = AggregateStats::default();
-            for _ in 0..50 {
-                let mut board = Board::new(width, height, mines).unwrap();
-                let game_stats = solve_single_game(&mut board, *solver);
-                aggregate.games.push(game_stats);
-            }
-
-            println!("\n{} on {}x{} board:", name, width, height);
-            println!("Success rate: {:.1}%", aggregate.success_rate());
-            println!(
-                "Average board completion: {:.1}%",
-                aggregate.average_completion(board_size)
-            );
-            println!("Average moves per game: {:.1}", aggregate.average_moves());
-            println!("Total mine hits: {}", aggregate.total_mines_hit());
-            println!("Total safe moves: {}", aggregate.total_safe_moves());
-            println!("Games played: {}", aggregate.games_played());
-        }
-    }
-
-    group.finish();
-}
-
-fn create_solver_chains() -> Vec<(Box<dyn Solver>, &'static str)> {
+fn create_solvers() -> Vec<(Box<dyn Solver>, &'static str)> {
     vec![
         // SINGLE //
         // Counting
@@ -288,7 +229,7 @@ fn create_solver_chains() -> Vec<(Box<dyn Solver>, &'static str)> {
     ]
 }
 
-fn benchmark_solver_chains(c: &mut Criterion) {
+fn benchmark_solvers(c: &mut Criterion) {
     let mut group = c.benchmark_group("Solver Chains");
 
     if std::env::var("QUICK_BENCH").is_ok() {
@@ -304,7 +245,7 @@ fn benchmark_solver_chains(c: &mut Criterion) {
         (30, 16, 99), // Expert
     ];
 
-    let solver_chains = create_solver_chains();
+    let solver_chains = create_solvers();
 
     for (width, height, mines) in test_configs {
         let board_size = (width * height) as usize;
@@ -349,5 +290,5 @@ fn benchmark_solver_chains(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, benchmark_solver_chains); //, benchmark_solvers);
+criterion_group!(benches, benchmark_solvers);
 criterion_main!(benches);
