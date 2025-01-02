@@ -9,6 +9,6 @@ pub use error::GameError;
 pub use game::{Action, Game, GameState};
 pub use position::Position;
 pub use solver::{
-    create_full_solver, Certainty, CountingSolver, MatrixSolver, ProbabilisticSolver, Solver,
-    SolverAction, SolverBoard, SolverResult, TankSolver,
+    CountingSolver, DeterministicResult, DeterministicSolver, MatrixSolver, ProbabilisticResult,
+    ProbabilisticSolver, Solver, SolverBoard, SolverChain, TankSolver,
 };
