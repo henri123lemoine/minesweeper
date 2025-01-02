@@ -1,8 +1,8 @@
-use std::collections::{HashMap, HashSet};
-
-use super::{board::SolverCell, Certainty, Solver, SolverAction, SolverBoard, SolverResult};
+use super::board::{SolverBoard, SolverCell};
+use super::solver_test_suite;
+use super::traits::{DeterministicResult, DeterministicSolver, Solver};
 use crate::Position;
-use minesweeper_solver_derive::SolverTest;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Ordering {
@@ -11,13 +11,19 @@ enum Ordering {
     GreaterThanEq,
 }
 
+/// Represents a system of linear equations in the context of Minesweeper
 #[derive(Debug)]
 struct LinearSystem {
+    /// Matrix of coefficients where each row represents an equation
     coefficients: Vec<Vec<f64>>,
+    /// Right-hand side constants for each equation
     constants: Vec<f64>,
+    /// Types of constraints (equality or inequality)
     operators: Vec<Ordering>,
-    variables: HashMap<Position, usize>,
-    inv_variables: Vec<Position>,
+    /// Maps board positions to matrix column indices
+    position_to_var: HashMap<Position, usize>,
+    /// Maps matrix column indices back to board positions
+    var_to_position: Vec<Position>,
 }
 
 impl LinearSystem {
@@ -26,15 +32,27 @@ impl LinearSystem {
             coefficients: Vec::new(),
             constants: Vec::new(),
             operators: Vec::new(),
-            variables: HashMap::new(),
-            inv_variables: Vec::new(),
+            position_to_var: HashMap::new(),
+            var_to_position: Vec::new(),
         }
     }
 
+    /// Adds a new variable (board position) to the system
+    fn add_variable(&mut self, pos: Position) -> usize {
+        if let Some(&idx) = self.position_to_var.get(&pos) {
+            return idx;
+        }
+        let idx = self.var_to_position.len();
+        self.position_to_var.insert(pos, idx);
+        self.var_to_position.push(pos);
+        idx
+    }
+
+    /// Adds a new equation to the system: coefficients * variables = constant
     fn add_equation(&mut self, coeffs: Vec<f64>, constant: f64, operator: Ordering) {
         assert_eq!(
             coeffs.len(),
-            self.inv_variables.len(),
+            self.var_to_position.len(),
             "Coefficient vector length must match number of variables"
         );
         self.coefficients.push(coeffs);
@@ -42,13 +60,15 @@ impl LinearSystem {
         self.operators.push(operator);
     }
 
-    fn solve(&self) -> Vec<(Position, bool)> {
-        let mut results = Vec::new();
-        if self.coefficients.is_empty() || self.inv_variables.is_empty() {
-            return results;
+    /// Solves the system using Gaussian elimination with partial pivoting
+    /// Returns positions that are definitely mines or definitely safe
+    fn solve(&self) -> DeterministicResult {
+        let mut result = DeterministicResult::default();
+        if self.coefficients.is_empty() || self.var_to_position.is_empty() {
+            return result;
         }
 
-        // First process pure equality constraints
+        // Separate equality and inequality constraints
         let mut eq_matrix = Vec::new();
         let mut eq_constants = Vec::new();
         let mut ineq_matrix = Vec::new();
@@ -72,7 +92,7 @@ impl LinearSystem {
         // Solve equality system first
         let mut eq_results = self.solve_equalities(&eq_matrix, &eq_constants);
 
-        // Use inequalities to further constrain results
+        // Apply inequality constraints
         if !ineq_matrix.is_empty() {
             self.apply_inequality_constraints(
                 &mut eq_results,
@@ -82,21 +102,24 @@ impl LinearSystem {
             );
         }
 
-        // Convert results to Position-based format
+        // Convert results to definite mines and safe positions
         for (idx, &value) in eq_results.iter().enumerate() {
             if let Some(v) = value {
-                if (v - 0.0).abs() < 1e-10 || (v - 1.0).abs() < 1e-10 {
-                    results.push((self.inv_variables[idx], (v - 1.0).abs() < 1e-10));
+                let pos = self.var_to_position[idx];
+                if v.abs() < 1e-10 {
+                    result.safe.insert(pos);
+                } else if (v - 1.0).abs() < 1e-10 {
+                    result.mines.insert(pos);
                 }
             }
         }
 
-        results
+        result
     }
 
     fn solve_equalities(&self, matrix: &[Vec<f64>], constants: &[f64]) -> Vec<Option<f64>> {
         let n = matrix.len();
-        let m = self.inv_variables.len();
+        let m = self.var_to_position.len();
         let epsilon = 1e-10;
 
         let mut aug_matrix = matrix.to_vec();
@@ -108,8 +131,9 @@ impl LinearSystem {
             // Find pivot
             let mut max_val = 0.0;
             let mut max_row = i;
-            for j in i..n {
-                let abs_val = aug_matrix[j][i].abs();
+
+            for (j, row) in aug_matrix.iter().enumerate().take(n).skip(i) {
+                let abs_val = row[i].abs();
                 if abs_val > max_val {
                     max_val = abs_val;
                     max_row = j;
@@ -134,12 +158,15 @@ impl LinearSystem {
                 }
                 aug_constants[i] /= pivot;
 
+                // Store the pivot row values we need
+                let pivot_row: Vec<f64> = aug_matrix[i][i..m].to_vec();
+
                 // Eliminate column
                 for j in 0..n {
                     if i != j {
                         let factor = aug_matrix[j][i];
                         for k in i..m {
-                            aug_matrix[j][k] -= factor * aug_matrix[i][k];
+                            aug_matrix[j][k] -= factor * pivot_row[k - i];
                             if aug_matrix[j][k].abs() < epsilon {
                                 aug_matrix[j][k] = 0.0;
                             }
@@ -154,16 +181,16 @@ impl LinearSystem {
         self.process_integer_constraints(&mut aug_matrix, &mut aug_constants);
 
         // Back substitution and result extraction
-        for i in 0..n {
+        for (i, row) in aug_matrix.iter().enumerate().take(n) {
             let mut single_var = None;
             let mut var_count = 0;
             let mut all_ones = true;
 
-            for j in 0..m {
-                if aug_matrix[i][j].abs() > epsilon {
+            for (j, &coeff) in row.iter().enumerate() {
+                if coeff.abs() > epsilon {
                     var_count += 1;
                     single_var = Some(j);
-                    if (aug_matrix[i][j] - 1.0).abs() > epsilon {
+                    if (coeff - 1.0).abs() > epsilon {
                         all_ones = false;
                     }
                 }
@@ -180,15 +207,15 @@ impl LinearSystem {
                 let constant = aug_constants[i];
                 if constant.abs() < epsilon {
                     // All variables must be 0
-                    for j in 0..m {
-                        if aug_matrix[i][j].abs() > epsilon {
+                    for (j, &coeff) in row.iter().enumerate() {
+                        if coeff.abs() > epsilon {
                             results[j] = Some(0.0);
                         }
                     }
                 } else if (constant - var_count as f64).abs() < epsilon {
                     // All variables must be 1
-                    for j in 0..m {
-                        if aug_matrix[i][j].abs() > epsilon {
+                    for (j, &coeff) in row.iter().enumerate() {
+                        if coeff.abs() > epsilon {
                             results[j] = Some(1.0);
                         }
                     }
@@ -199,20 +226,20 @@ impl LinearSystem {
         results
     }
 
-    fn process_integer_constraints(&self, matrix: &mut Vec<Vec<f64>>, constants: &mut Vec<f64>) {
+    fn process_integer_constraints(&self, matrix: &mut [Vec<f64>], constants: &mut [f64]) {
         let epsilon = 1e-10;
-        for i in 0..matrix.len() {
-            let row_sum: f64 = matrix[i].iter().sum();
+        for (i, row) in matrix.iter_mut().enumerate() {
+            let row_sum: f64 = row.iter().sum();
 
             // Check if this row represents an integer constraint
             if (row_sum.round() - row_sum).abs() < epsilon {
                 let constant = constants[i];
                 if (constant.round() - constant).abs() >= epsilon {
                     // This equation is impossible - force variables to 0
-                    for j in 0..matrix[i].len() {
-                        if matrix[i][j].abs() > epsilon {
-                            matrix[i] = vec![0.0; matrix[i].len()];
-                            matrix[i][j] = 1.0;
+                    for (j, val) in row.iter_mut().enumerate() {
+                        if val.abs() > epsilon {
+                            *row = vec![0.0; row.len()];
+                            row[j] = 1.0;
                             constants[i] = 0.0;
                             break;
                         }
@@ -224,7 +251,7 @@ impl LinearSystem {
 
     fn apply_inequality_constraints(
         &self,
-        results: &mut Vec<Option<f64>>,
+        results: &mut [Option<f64>],
         ineq_matrix: &[Vec<f64>],
         ineq_constants: &[f64],
         ineq_operators: &[Ordering],
@@ -282,22 +309,20 @@ impl LinearSystem {
     }
 }
 
+/// Represents a connected component of the Minesweeper board
 #[derive(Debug)]
 struct Component {
+    /// Unknown positions in this component
     positions: HashSet<Position>,
+    /// Known number constraints (position and value)
     constraints: Vec<(Position, u8)>,
 }
 
-#[derive(SolverTest)]
+#[derive(Debug, Default)]
 pub struct MatrixSolver;
 
-impl Default for MatrixSolver {
-    fn default() -> Self {
-        Self
-    }
-}
-
 impl MatrixSolver {
+    /// Finds connected components of unknown cells and their constraints
     fn find_components(&self, board: &SolverBoard) -> Vec<Component> {
         let mut components = Vec::new();
         let mut visited = HashSet::new();
@@ -315,14 +340,16 @@ impl MatrixSolver {
             match board.get(pos) {
                 Some(SolverCell::Covered) => {
                     component.positions.insert(pos);
+                    // Explore neighbors for connecting constraints
                     for npos in board.neighbors(pos) {
-                        if !visited.contains(&npos) {
+                        if let Some(SolverCell::Revealed(_)) = board.get(npos) {
                             explore_component(npos, board, component, visited);
                         }
                     }
                 }
                 Some(SolverCell::Revealed(n)) => {
                     component.constraints.push((pos, n));
+                    // Continue exploration from neighbors
                     for npos in board.neighbors(pos) {
                         if !visited.contains(&npos) {
                             explore_component(npos, board, component, visited);
@@ -333,6 +360,7 @@ impl MatrixSolver {
             }
         }
 
+        // Find all components
         for pos in board.iter_positions() {
             if !visited.contains(&pos) {
                 if let Some(SolverCell::Covered) = board.get(pos) {
@@ -352,6 +380,7 @@ impl MatrixSolver {
         components
     }
 
+    /// Merges components that share constraints
     fn merge_components(&self, components: &mut Vec<Component>) {
         let mut i = 0;
         while i < components.len() {
@@ -369,6 +398,7 @@ impl MatrixSolver {
                     .iter()
                     .any(|&(pos, _)| component_i_constraints.contains(&pos))
                 {
+                    // Merge component j into i
                     let component_j = components.remove(j);
                     components[i].positions.extend(component_j.positions);
                     components[i].constraints.extend(component_j.constraints);
@@ -384,62 +414,65 @@ impl MatrixSolver {
         }
     }
 
+    /// Builds linear system for a component
     fn build_component_system(&self, board: &SolverBoard, component: &Component) -> LinearSystem {
         let mut system = LinearSystem::new();
 
-        // Create variables for each unknown square
-        for (idx, &pos) in component.positions.iter().enumerate() {
-            system.variables.insert(pos, idx);
-            system.inv_variables.push(pos);
+        // Create variables for each unknown position
+        for &pos in &component.positions {
+            system.add_variable(pos);
         }
 
-        // Add equations and inequalities from constraints
+        // Add equations from number constraints
         for &(pos, value) in &component.constraints {
-            let mut coeffs = vec![0.0; system.inv_variables.len()];
-            let mut covered_count = 0;
-            let mut flagged_count = 0;
+            let mut coeffs = vec![0.0; system.var_to_position.len()];
+            let mut mine_count = 0;
 
             for npos in board.neighbors(pos) {
                 match board.get(npos) {
                     Some(SolverCell::Covered) if component.positions.contains(&npos) => {
-                        coeffs[system.variables[&npos]] = 1.0;
-                        covered_count += 1;
+                        coeffs[system.position_to_var[&npos]] = 1.0;
                     }
-                    Some(SolverCell::Flagged) => {
-                        flagged_count += 1;
-                    }
+                    Some(SolverCell::Flagged) => mine_count += 1,
                     _ => {}
                 }
             }
 
-            let constant = value as f64 - flagged_count as f64;
+            let constant = value as f64 - mine_count as f64;
 
             // Add equality constraint
             system.add_equation(coeffs.clone(), constant, Ordering::Equal);
 
             // Add inequality constraints
-            if covered_count > 0 {
+            if !coeffs.iter().all(|&x| x.abs() < 1e-10) {
                 system.add_equation(coeffs.clone(), 0.0, Ordering::GreaterThanEq);
-                system.add_equation(coeffs.clone(), covered_count as f64, Ordering::LessThanEq);
+                let sum: f64 = coeffs.iter().sum();
+                system.add_equation(coeffs.clone(), sum, Ordering::LessThanEq);
             }
         }
 
-        // Add global constraints for mine count
-        if !component.positions.is_empty() {
-            let total_mines = board.total_mines();
-            let remaining_mines = total_mines - board.mines_marked();
-            let coeffs = vec![1.0; system.inv_variables.len()];
+        // Add global mine count constraint if available, properly scoped to this component
+        if let Some(total_remaining_mines) = board.remaining_mines() {
+            // Count how many covered cells are not in this component
+            let mut other_covered_count = 0;
+            for pos in board.iter_positions() {
+                if let Some(SolverCell::Covered) = board.get(pos) {
+                    if !component.positions.contains(&pos) {
+                        other_covered_count += 1;
+                    }
+                }
+            }
 
-            // Total mines constraint as equality
-            system.add_equation(coeffs.clone(), remaining_mines as f64, Ordering::Equal);
+            // We can now add constraints based on minimum and maximum possible mines in this component
+            let coeffs = vec![1.0; system.var_to_position.len()];
 
-            // Basic bounds
-            system.add_equation(coeffs.clone(), 0.0, Ordering::GreaterThanEq);
-            system.add_equation(
-                coeffs.clone(),
-                component.positions.len() as f64,
-                Ordering::LessThanEq,
-            );
+            // At minimum, this component must contain max(0, total_remaining - other_covered)
+            let min_mines = (total_remaining_mines as i32 - other_covered_count).max(0);
+            system.add_equation(coeffs.clone(), min_mines as f64, Ordering::GreaterThanEq);
+
+            // At maximum, this component can contain min(total_remaining, component_size)
+            let max_mines = total_remaining_mines.min(component.positions.len() as u32);
+            system.add_equation(coeffs.clone(), max_mines as f64, Ordering::LessThanEq);
         }
 
         system
@@ -447,8 +480,14 @@ impl MatrixSolver {
 }
 
 impl Solver for MatrixSolver {
-    fn solve(&self, board: &SolverBoard) -> SolverResult {
-        let mut actions = Vec::new();
+    fn name(&self) -> &str {
+        "Matrix Equation Solver"
+    }
+}
+
+impl DeterministicSolver for MatrixSolver {
+    fn solve(&self, board: &SolverBoard) -> DeterministicResult {
+        let mut result = DeterministicResult::default();
 
         // Find all components
         let components = self.find_components(board);
@@ -456,89 +495,225 @@ impl Solver for MatrixSolver {
         // Solve each component
         for component in components {
             let system = self.build_component_system(board, &component);
-            let solutions = system.solve();
-
-            // Convert solutions to actions
-            for (pos, is_mine) in solutions {
-                let action = if is_mine {
-                    SolverAction::Flag(pos)
-                } else {
-                    SolverAction::Reveal(pos)
-                };
-                actions.push(action);
-            }
+            let component_result = system.solve();
+            result.mines.extend(component_result.mines);
+            result.safe.extend(component_result.safe);
         }
 
-        SolverResult {
-            actions,
-            certainty: Certainty::Deterministic,
-        }
-    }
-
-    fn name(&self) -> &str {
-        "Matrix Equation Solver"
-    }
-
-    fn is_deterministic(&self) -> bool {
-        true
+        result
     }
 }
+
+solver_test_suite!(MatrixSolver, deterministic);
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{Board, Cell};
 
+    /// Helper function to create a board with known mine positions
+    fn create_test_board(width: u32, height: u32, mines: &[(i32, i32)]) -> Board {
+        let mut board = Board::new(width, height, mines.len() as u32).unwrap();
+        board.cells.clear();
+
+        // Initialize all cells as non-mines
+        for x in 0..width as i32 {
+            for y in 0..height as i32 {
+                board.cells.insert(Position::new(x, y), Cell::Hidden(false));
+            }
+        }
+
+        // Place mines at specified positions
+        for &(x, y) in mines {
+            board.cells.insert(Position::new(x, y), Cell::Hidden(true));
+        }
+
+        board
+    }
+
     #[test]
-    fn test_simple_component() {
-        let mut board = Board::new(3, 3, 1).unwrap();
-        // Set up a simple board with one known mine
+    fn test_linear_system_simple() {
+        let mut system = LinearSystem::new();
+
+        // Create a simple 2x2 system: x + y = 1, x = 1
+        let pos1 = Position::new(0, 0);
+        let pos2 = Position::new(0, 1);
+        system.add_variable(pos1);
+        system.add_variable(pos2);
+
+        system.add_equation(vec![1.0, 1.0], 1.0, Ordering::Equal);
+        system.add_equation(vec![1.0, 0.0], 1.0, Ordering::Equal);
+
+        let result = system.solve();
+
+        assert!(
+            result.mines.contains(&pos1),
+            "Position (0,0) should be a mine"
+        );
+        assert!(result.safe.contains(&pos2), "Position (0,1) should be safe");
+    }
+
+    #[test]
+    fn test_component_isolation() {
+        // Let's make a board with a true gap:
+        // [1|?|_|1|?]  (_ is empty space/gap)
+        // [?|?|_|?|?]
+        let mut board = create_test_board(5, 2, &[(0, 0), (3, 0)]);
+        // Create a gap in the middle
+        board.cells.remove(&Position::new(2, 0));
+        board.cells.remove(&Position::new(2, 1));
+        board.reveal(Position::new(0, 0)).unwrap();
+        board.reveal(Position::new(3, 0)).unwrap();
+
+        let solver = MatrixSolver;
+        let solver_board = SolverBoard::new(&board);
+        let components = solver.find_components(&solver_board);
+
+        assert_eq!(
+            components.len(),
+            2,
+            "Should find exactly two separate components"
+        );
+
+        // Verify components don't overlap
+        let component1_positions: HashSet<_> = components[0].positions.iter().cloned().collect();
+        let component2_positions: HashSet<_> = components[1].positions.iter().cloned().collect();
+        assert!(
+            component1_positions.is_disjoint(&component2_positions),
+            "Components should not share positions"
+        );
+    }
+
+    #[test]
+    fn test_component_merging() {
+        // Create a board with components that should merge due to shared constraints
+        // [1|?|1]
+        // [?|?|?]
+        let mut board = create_test_board(3, 2, &[(0, 0), (2, 0)]);
+        board.reveal(Position::new(0, 0)).unwrap();
+        board.reveal(Position::new(2, 0)).unwrap();
+
+        let solver = MatrixSolver;
+        let solver_board = SolverBoard::new(&board);
+        let components = solver.find_components(&solver_board);
+
+        assert_eq!(
+            components.len(),
+            1,
+            "Components sharing constraints should be merged into one"
+        );
+        assert!(
+            components[0].positions.len() > 3,
+            "Merged component should contain all connecting positions"
+        );
+    }
+
+    #[test]
+    fn test_numerical_stability() {
+        // Create a system with potential numerical stability issues
+        let mut system = LinearSystem::new();
+
+        // Add several variables
+        for i in 0..5 {
+            system.add_variable(Position::new(i, 0));
+        }
+
+        // Add equations that could cause numerical instability
+        system.add_equation(vec![0.1, 0.1, 0.1, 0.1, 0.1], 0.5, Ordering::Equal);
+        system.add_equation(vec![0.01, 0.01, 0.01, 0.01, 0.01], 0.05, Ordering::Equal);
+
+        let result = system.solve();
+        assert!(
+            !result.mines.is_empty() || !result.safe.is_empty(),
+            "Should handle small coefficients properly"
+        );
+    }
+
+    #[test]
+    fn test_overdetermined_system() {
+        // Create an overdetermined system with consistent equations
+        let mut system = LinearSystem::new();
+
+        let pos = Position::new(0, 0);
+        system.add_variable(pos);
+
+        // Multiple constraints that agree: x = 1
+        system.add_equation(vec![1.0], 1.0, Ordering::Equal);
+        system.add_equation(vec![1.0], 1.0, Ordering::Equal);
+        system.add_equation(vec![2.0], 2.0, Ordering::Equal);
+
+        let result = system.solve();
+        assert!(
+            result.mines.contains(&pos),
+            "Should correctly solve overdetermined system"
+        );
+    }
+
+    #[test]
+    fn test_inequality_constraints() {
+        let mut system = LinearSystem::new();
+
+        let pos = Position::new(0, 0);
+        system.add_variable(pos);
+
+        // Add constraints: x ≤ 1, x ≥ 1
+        system.add_equation(vec![1.0], 1.0, Ordering::LessThanEq);
+        system.add_equation(vec![1.0], 1.0, Ordering::GreaterThanEq);
+
+        let result = system.solve();
+        assert!(
+            result.mines.contains(&pos),
+            "Should deduce x=1 from inequalities"
+        );
+    }
+
+    #[test]
+    fn test_complex_board() {
+        // Create a configuration that must have a deterministic solution:
+        // [1|2|1]
+        // [#|2|#]  (# indicates revealed mine count)
+        // [?|S|?]  (S must be safe)
+        let mut board = create_test_board(3, 3, &[(0, 1), (2, 1)]);
+
+        // Reveal the top row
+        board.reveal(Position::new(0, 0)).unwrap();
+        board.reveal(Position::new(1, 0)).unwrap();
+        board.reveal(Position::new(2, 0)).unwrap();
+
+        // Reveal the middle number
+        board.reveal(Position::new(1, 1)).unwrap();
+
+        let solver = MatrixSolver;
+        let solver_board = SolverBoard::new(&board);
+        let result = solver.solve(&solver_board);
+
+        // The middle cell of the bottom row must be safe because:
+        // - We know where both mines are (from the 2)
+        // - Therefore middle bottom must be safe
+        assert!(
+            result.safe.contains(&Position::new(1, 2)),
+            "Middle bottom cell must be safe given mine positions"
+        );
+    }
+
+    #[test]
+    fn test_boundary_conditions() {
+        // Test solver behavior at board boundaries
+        let mut board = create_test_board(2, 2, &[(0, 0)]);
         board.reveal(Position::new(1, 1)).unwrap();
 
         let solver_board = SolverBoard::new(&board);
-        let solver = MatrixSolver;
-        let components = solver.find_components(&solver_board);
+        let components = MatrixSolver.find_components(&solver_board);
 
-        assert_eq!(components.len(), 1);
-        let component = &components[0];
-        assert!(component.positions.contains(&Position::new(0, 0)));
-        assert!(component
-            .constraints
-            .iter()
-            .any(|&(pos, _)| pos == Position::new(1, 1)));
+        assert!(
+            !components.is_empty(),
+            "Should handle boundary cells properly"
+        );
+        assert!(
+            !components[0].constraints.is_empty(),
+            "Should include boundary cell constraints"
+        );
     }
 
-    #[test]
-    fn test_linear_system_solution() {
-        let mut system = LinearSystem::new();
-
-        // Add test equations
-        system.inv_variables.push(Position::new(0, 0));
-        system.inv_variables.push(Position::new(0, 1));
-        system.variables.insert(Position::new(0, 0), 0);
-        system.variables.insert(Position::new(0, 1), 1);
-
-        system.add_equation(vec![1.0, 1.0], 1.0, Ordering::Equal); // x + y = 1
-        system.add_equation(vec![1.0, 0.0], 1.0, Ordering::Equal); // x = 1
-
-        let solutions = system.solve();
-        assert_eq!(solutions.len(), 2);
-        assert!(solutions.contains(&(Position::new(0, 0), true)));
-        assert!(solutions.contains(&(Position::new(0, 1), false)));
-    }
-
-    #[test]
-    fn test_merge_components() {
-        let mut board = Board::new(4, 4, 0).unwrap(); // Start with no mines
-
-        // Manually insert numbers to create a guaranteed shared constraint
-        board.cells.insert(Position::new(1, 1), Cell::Revealed(1));
-        board.cells.insert(Position::new(2, 1), Cell::Revealed(1));
-
-        let solver_board = SolverBoard::new(&board);
-        let solver = MatrixSolver;
-        let components = solver.find_components(&solver_board);
-
-        assert_eq!(components.len(), 1, "Expected one merged component");
-    }
+    // TODO: test_global_constraints
 }
