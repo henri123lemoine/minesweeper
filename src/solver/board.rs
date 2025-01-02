@@ -34,6 +34,18 @@ impl<'a> SolverBoard<'a> {
         self.board.mines_count() as f64 / (self.board.width * self.board.height) as f64
     }
 
+    /// Returns the number of mines remaining to be found
+    pub fn remaining_mines(&self) -> Option<u32> {
+        let total = self.total_mines();
+        let marked = self.mines_marked();
+
+        if marked > total {
+            return None;
+        }
+
+        Some(total - marked)
+    }
+
     pub fn dimensions(&self) -> (u32, u32) {
         self.board.dimensions()
     }
