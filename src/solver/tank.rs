@@ -1,37 +1,39 @@
-use super::{
-    board::{SolverBoard, SolverCell},
-    traits::{Certainty, Solver, SolverAction, SolverResult},
-};
+use super::board::{SolverBoard, SolverCell};
+use super::solver_test_suite;
+use super::traits::{DeterministicResult, ProbabilisticResult, ProbabilisticSolver, Solver};
 use crate::Position;
-use minesweeper_solver_derive::SolverTest;
 use std::collections::{HashMap, HashSet, VecDeque};
 
-/// Tank Solver implementation based on Simon Tatham's algorithm
-/// https://www.chiark.greenend.org.uk/~sgtatham/mines/#solve
-#[derive(SolverTest)]
-pub struct TankSolver {
-    pub min_confidence: f64,
-}
-
-impl Default for TankSolver {
-    fn default() -> Self {
-        Self {
-            min_confidence: 0.95,
-        }
-    }
-}
-
+/// A constraint in Tank's algorithm, representing the sum of mines in a set of positions
 #[derive(Debug, Clone)]
 struct MineConstraint {
     positions: HashSet<Position>,
     mines_required: u8,
 }
 
+/// Tank Solver implementation based on Simon Tatham's algorithm
+/// https://www.chiark.greenend.org.uk/~sgtatham/mines/#solve
+#[derive(Debug)]
+pub struct TankSolver {
+    confidence_threshold: f64,
+}
+
+impl Default for TankSolver {
+    fn default() -> Self {
+        Self {
+            confidence_threshold: 0.95,
+        }
+    }
+}
+
 impl TankSolver {
-    pub fn new(min_confidence: f64) -> Self {
-        Self { min_confidence }
+    pub fn new(confidence_threshold: f64) -> Self {
+        Self {
+            confidence_threshold,
+        }
     }
 
+    /// Collects all constraints from the board state
     fn get_constraints(&self, board: &SolverBoard) -> Vec<MineConstraint> {
         let mut constraints = Vec::new();
         let mut seen_positions = HashSet::new();
@@ -83,12 +85,13 @@ impl TankSolver {
         constraints
     }
 
-    fn flood_probability(&self, constraints: &[MineConstraint]) -> HashMap<Position, f64> {
+    /// Performs probability flooding to calculate mine probabilities
+    fn flood_probabilities(&self, constraints: &[MineConstraint]) -> HashMap<Position, f64> {
         let mut probabilities = HashMap::new();
         let mut queue = VecDeque::new();
         let mut processed = HashSet::new();
 
-        // Initialize with single-position constraints
+        // Initialize probabilities from single-position constraints
         for constraint in constraints {
             if constraint.positions.len() == 1 {
                 let pos = *constraint.positions.iter().next().unwrap();
@@ -97,7 +100,7 @@ impl TankSolver {
                 queue.push_back(pos);
                 processed.insert(pos);
             } else {
-                // For multi-position constraints, initialize with uniform probability
+                // Initialize multi-position constraints with uniform probability
                 let prob = constraint.mines_required as f64 / constraint.positions.len() as f64;
                 for &pos in &constraint.positions {
                     if !processed.contains(&pos) {
@@ -109,28 +112,16 @@ impl TankSolver {
             }
         }
 
-        // If we have no probabilities yet but do have constraints, initialize them
-        if probabilities.is_empty() && !constraints.is_empty() {
-            let first_constraint = &constraints[0];
-            let prob =
-                first_constraint.mines_required as f64 / first_constraint.positions.len() as f64;
-            for &pos in &first_constraint.positions {
-                probabilities.insert(pos, prob);
-                queue.push_back(pos);
-                processed.insert(pos);
-            }
-        }
-
+        // Process probability queue
         while let Some(pos) = queue.pop_front() {
             let prob = *probabilities.get(&pos).unwrap();
 
-            // Find all constraints containing this position
+            // Update probabilities for all constraints containing this position
             for constraint in constraints {
                 if !constraint.positions.contains(&pos) {
                     continue;
                 }
 
-                // Calculate new probabilities for other positions in constraint
                 let other_positions: Vec<_> = constraint
                     .positions
                     .iter()
@@ -141,16 +132,17 @@ impl TankSolver {
                     continue;
                 }
 
+                // Calculate new probabilities for other positions
                 let remaining_mines = (constraint.mines_required as f64 - prob).max(0.0);
                 let new_prob = remaining_mines / other_positions.len() as f64;
 
                 // Update probabilities and queue
                 for &new_pos in &other_positions {
-                    match probabilities.get(&new_pos) {
+                    match probabilities.get(new_pos) {
                         Some(&existing) => {
                             if (new_prob - existing).abs() > f64::EPSILON {
                                 probabilities.insert(*new_pos, (new_prob + existing) / 2.0);
-                                if !queue.contains(&new_pos) {
+                                if !queue.contains(new_pos) {
                                     queue.push_back(*new_pos);
                                 }
                             }
@@ -167,109 +159,98 @@ impl TankSolver {
 
         probabilities
     }
+
+    /// Separates definite results from probabilistic ones
+    fn analyze_probabilities(&self, probabilities: HashMap<Position, f64>) -> ProbabilisticResult {
+        let mut result = ProbabilisticResult::default();
+        let epsilon = 1e-10;
+
+        for (pos, prob) in probabilities {
+            if (prob - 0.0).abs() < epsilon {
+                result.deterministic.safe.insert(pos);
+            } else if (prob - 1.0).abs() < epsilon {
+                result.deterministic.mines.insert(pos);
+            } else {
+                result.probabilities.push((pos, prob));
+            }
+        }
+
+        result.probabilities.sort_unstable_by(|a, b| {
+            let a_certainty = if a.1 < 0.5 { 1.0 - a.1 } else { a.1 };
+            let b_certainty = if b.1 < 0.5 { 1.0 - b.1 } else { b.1 };
+            b_certainty.partial_cmp(&a_certainty).unwrap()
+        });
+
+        result
+    }
 }
 
 impl Solver for TankSolver {
-    fn solve(&self, board: &SolverBoard) -> SolverResult {
-        // Handle opening move
-        if board
-            .iter_positions()
-            .all(|pos| !matches!(board.get(pos), Some(SolverCell::Revealed(_))))
-        {
+    fn name(&self) -> &str {
+        "Tank Solver"
+    }
+}
+
+impl ProbabilisticSolver for TankSolver {
+    fn solve(&self, board: &SolverBoard) -> ProbabilisticResult {
+        // Special case: opening move
+        if board.is_start() {
             let (width, height) = board.dimensions();
-            return SolverResult {
-                actions: vec![SolverAction::Reveal(Position::new(
-                    (width / 2) as i32,
-                    (height / 2) as i32,
-                ))],
-                certainty: Certainty::Probabilistic(0.9),
+            let center_pos = Position::new((width / 2) as i32, (height / 2) as i32);
+
+            return ProbabilisticResult {
+                deterministic: DeterministicResult::default(),
+                probabilities: vec![(center_pos, board.mine_density())],
             };
         }
 
         // Get constraints and calculate probabilities
         let constraints = self.get_constraints(board);
-
-        // If we have no constraints but uncovered squares, pick one at random
         if constraints.is_empty() {
-            if let Some(pos) = board
-                .iter_positions()
-                .find(|&pos| matches!(board.get(pos), Some(SolverCell::Covered)))
-            {
-                return SolverResult {
-                    actions: vec![SolverAction::Reveal(pos)],
-                    certainty: Certainty::Probabilistic(0.5),
-                };
-            }
+            return ProbabilisticResult::default();
         }
 
-        let probabilities = self.flood_probability(&constraints);
-
-        // Find best move
-        let mut best_action = None;
-        let mut best_certainty = 0.0;
-
-        for (&pos, &prob) in &probabilities {
-            let certainty = if prob < 0.5 { 1.0 - prob } else { prob };
-            if certainty > best_certainty {
-                best_certainty = certainty;
-                best_action = Some(if prob < 0.5 {
-                    SolverAction::Reveal(pos)
-                } else {
-                    SolverAction::Flag(pos)
-                });
-            }
-        }
-
-        // Only return action if we meet confidence threshold
-        if let Some(action) = best_action {
-            if best_certainty >= self.min_confidence {
-                return SolverResult {
-                    actions: vec![action],
-                    certainty: Certainty::Probabilistic(best_certainty),
-                };
-            }
-        }
-
-        // If we get here and still have no action but have covered squares, pick one
-        if let Some(pos) = board
-            .iter_positions()
-            .find(|&pos| matches!(board.get(pos), Some(SolverCell::Covered)))
-        {
-            SolverResult {
-                actions: vec![SolverAction::Reveal(pos)],
-                certainty: Certainty::Probabilistic(0.5),
-            }
-        } else {
-            SolverResult {
-                actions: vec![],
-                certainty: Certainty::Probabilistic(best_certainty),
-            }
-        }
+        let probabilities = self.flood_probabilities(&constraints);
+        self.analyze_probabilities(probabilities)
     }
 
-    fn name(&self) -> &str {
-        "Tank Solver"
-    }
-
-    fn is_deterministic(&self) -> bool {
-        false
+    fn confidence_threshold(&self) -> f64 {
+        self.confidence_threshold
     }
 }
 
-// Additional tests specific to Tank solver
+solver_test_suite!(TankSolver, probabilistic);
+
 #[cfg(test)]
-mod tank_specific_tests {
+mod tests {
     use super::*;
     use crate::{Board, Cell};
 
     #[test]
-    fn test_constraint_generation() {
-        let mut board = Board::new(3, 3, 2).unwrap();
-        board.cells.insert(Position::new(1, 1), Cell::Revealed(2));
-        let solver = TankSolver::new(0.95);
+    fn test_opening_move() {
+        let board = Board::new(8, 8, 10).unwrap();
+        let solver = TankSolver::default();
         let solver_board = SolverBoard::new(&board);
 
+        let result = solver.solve(&solver_board);
+        assert!(result.deterministic.mines.is_empty());
+        assert!(result.deterministic.safe.is_empty());
+        assert_eq!(result.probabilities.len(), 1);
+
+        // Should suggest center as opening move
+        let (pos, _) = result.probabilities[0];
+        assert_eq!(pos, Position::new(4, 4));
+    }
+
+    #[test]
+    fn test_constraint_generation() {
+        let mut board = Board::new(3, 3, 1).unwrap();
+        board.reveal(Position::new(1, 1)).unwrap();
+
+        let solver = TankSolver::default();
+        let solver_board = SolverBoard::new(&board);
         let constraints = solver.get_constraints(&solver_board);
+
         assert!(
             !constraints.is_empty(),
             "Should generate at least one constraint"
@@ -277,24 +258,37 @@ mod tank_specific_tests {
     }
 
     #[test]
+    fn test_definite_results() {
+        let mut board = Board::new(3, 3, 1).unwrap();
+
+        // Create a known board state where one position must be a mine
+        board.reveal(Position::new(1, 1)).unwrap();
+        if let Ok(Cell::Revealed(1)) = board.get_cell(Position::new(1, 1)) {
+            let solver = TankSolver::default();
+            let solver_board = SolverBoard::new(&board);
+            let result = solver.solve(&solver_board);
+
+            assert!(
+                !result.deterministic.mines.is_empty() || !result.deterministic.safe.is_empty(),
+                "Should find at least one definite result"
+            );
+        }
+    }
+
+    #[test]
     fn test_probability_flooding() {
         let mut board = Board::new(3, 3, 1).unwrap();
-        board.cells.insert(Position::new(1, 1), Cell::Revealed(1));
-        let solver = TankSolver::new(0.95);
+        board.reveal(Position::new(1, 1)).unwrap();
+
+        let solver = TankSolver::default();
         let solver_board = SolverBoard::new(&board);
-
         let constraints = solver.get_constraints(&solver_board);
-        let probabilities = solver.flood_probability(&constraints);
+        let probabilities = solver.flood_probabilities(&constraints);
 
-        assert!(
-            !probabilities.is_empty(),
-            "Should calculate probabilities for covered cells"
-        );
-
-        // All probabilities should be between 0 and 1
+        // Verify probability bounds
         for &prob in probabilities.values() {
             assert!(
-                prob >= 0.0 && prob <= 1.0,
+                (0.0..=1.0).contains(&prob),
                 "Probabilities must be between 0 and 1"
             );
         }
