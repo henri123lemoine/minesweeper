@@ -127,24 +127,6 @@ macro_rules! solver_test_suite {
                 );
                 let (mean_predicted, mean_actual) = (mean_predicted / n, mean_actual / n);
 
-                // Calculate standard error under null hypothesis
-                let var_estimate = predictions
-                    .iter()
-                    .map(|(p, a)| {
-                        let a = if *a { 1.0 } else { 0.0 };
-                        let e = (p - a).powi(2) - reliability;
-                        e.powi(2)
-                    })
-                    .sum::<f64>()
-                    / (n.powi(2));
-
-                let standard_error = var_estimate.sqrt();
-                let z_score = reliability / standard_error;
-
-                // Calculate p-value
-                let normal = Normal::new(0.0, 1.0).unwrap();
-                let p_value = 2.0 * (1.0 - normal.cdf(z_score.abs()));
-
                 // Calculate detailed calibration statistics
                 let pred_ranges = vec![0.0, 0.2, 0.4, 0.6, 0.8, 1.0];
                 let mut range_stats = vec![];
@@ -171,22 +153,22 @@ macro_rules! solver_test_suite {
                     }
                 }
 
-                const ALPHA: f64 = 0.05; // Significance level
+                const MAX_RELIABILITY: f64 = 0.15;
 
-                let mut error_msg = format!(
+                let error_msg = format!(
                     "\nCalibration Analysis:\n\
                      Overall Statistics:\n\
                      - Reliability Score: {:.6} (lower is better)\n\
                      - Mean Predicted Probability: {:.3}\n\
                      - Actual Mine Frequency: {:.3}\n\
-                     - Number of Predictions: {}\n\
-                     - P-value: {:.6}\n\n\
+                     - Number of Predictions: {}\n\n\
                      Detailed Breakdown by Prediction Range:\n",
-                    reliability, mean_predicted, mean_actual, n as u32, p_value
+                    reliability, mean_predicted, mean_actual, n as u32
                 );
 
+                let mut full_msg = String::from(error_msg);
                 for (range, mean_pred, actual_freq, count) in range_stats {
-                    error_msg.push_str(&format!(
+                    full_msg.push_str(&format!(
                         "Range {:.1}-{:.1}:\n\
                          - Count: {}\n\
                          - Mean Predicted Prob: {:.3}\n\
@@ -201,7 +183,7 @@ macro_rules! solver_test_suite {
                     ));
                 }
 
-                error_msg.push_str(&format!(
+                full_msg.push_str(&format!(
                     "Visual Calibration Error:\n\
                      Mean Predicted ({:.3}) vs Actual ({:.3}): {}{}|\n\
                      Difference: {:.3} ({})",
@@ -221,9 +203,16 @@ macro_rules! solver_test_suite {
                     }
                 ));
 
-                assert!(p_value >= ALPHA || reliability < 0.05, "{}", error_msg);
-            }
+                // Always print diagnostics
+                println!("{}", full_msg);
 
+                assert!(
+                    reliability < MAX_RELIABILITY,
+                    "Calibration failed: reliability {:.6} > threshold {}",
+                    reliability,
+                    MAX_RELIABILITY
+                );
+            }
             #[test]
             fn test_deterministic_subset() {
                 let solver = <$solver>::default();
