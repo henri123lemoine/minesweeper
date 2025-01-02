@@ -1,8 +1,8 @@
 use criterion::{criterion_group, criterion_main, Criterion};
 use minesweeper::{
     solver::{
-        ChainSolver, CountingSolver, MatrixSolver, ProbabilisticSolver, Solver, SolverAction,
-        SolverBoard, TankSolver,
+        ChainResult, CountingSolver, DeterministicResult, MatrixSolver, SolverBoard, SolverChain,
+        TankSolver,
     },
     Board, Cell, Position,
 };
@@ -63,7 +63,47 @@ impl AggregateStats {
     }
 }
 
-fn solve_single_game(board: &mut Board, solver: &dyn Solver) -> GameStats {
+/// Apply solver actions to the board and update game statistics
+fn apply_solver_result(
+    board: &mut Board,
+    stats: &mut GameStats,
+    result: &DeterministicResult,
+) -> bool {
+    let mut made_progress = false;
+
+    // First reveal all safe positions
+    for &pos in &result.safe {
+        if let Ok(Cell::Hidden(is_mine)) = board.get_cell(pos) {
+            if *is_mine {
+                stats.mines_hit += 1;
+                stats.lost = true;
+                return false;
+            } else {
+                stats.safe_moves += 1;
+                let _ = board.reveal(pos);
+                made_progress = true;
+            }
+        }
+    }
+
+    // Then flag all mine positions
+    for &pos in &result.mines {
+        if let Ok(Cell::Hidden(is_mine)) = board.get_cell(pos) {
+            if *is_mine {
+                let _ = board.toggle_flag(pos);
+                made_progress = true;
+            } else {
+                // Incorrectly flagging a safe cell should count as a loss
+                stats.lost = true;
+                return false;
+            }
+        }
+    }
+
+    made_progress
+}
+
+fn solve_single_game(board: &mut Board, solver: &SolverChain) -> GameStats {
     let mut stats = GameStats::default();
     let total_safe_cells = (board.dimensions().0 * board.dimensions().1) - board.mines_count();
 
@@ -102,46 +142,42 @@ fn solve_single_game(board: &mut Board, solver: &dyn Solver) -> GameStats {
     let mut stall_count = 0;
 
     while stall_count < 3 {
-        // Allow a few attempts to break through stuck positions
         let solver_board = SolverBoard::new(board);
-        let result = solver.solve(&solver_board);
+        let chain_result = solver.solve(&solver_board);
 
-        if result.actions.is_empty() {
+        let det_result = match chain_result {
+            ChainResult::Deterministic(result) => result,
+            ChainResult::Probabilistic(prob_result) => {
+                if !prob_result.deterministic.mines.is_empty()
+                    || !prob_result.deterministic.safe.is_empty()
+                {
+                    prob_result.deterministic
+                } else if let Some(&(pos, prob)) = prob_result.probabilities.first() {
+                    let mut result = DeterministicResult::default();
+                    // Use highest probability action
+                    if prob >= 0.95 {
+                        result.mines.insert(pos);
+                    } else {
+                        result.safe.insert(pos);
+                    }
+                    result
+                } else {
+                    DeterministicResult::default()
+                }
+            }
+            ChainResult::NoSolution => DeterministicResult::default(),
+        };
+
+        if det_result.mines.is_empty() && det_result.safe.is_empty() {
             stall_count += 1;
             continue;
         }
 
         stats.moves_made += 1;
-        let mut made_progress = false;
+        let made_progress = apply_solver_result(board, &mut stats, &det_result);
 
-        for action in result.actions {
-            match action {
-                SolverAction::Reveal(pos) => {
-                    if let Ok(Cell::Hidden(is_mine)) = board.get_cell(pos) {
-                        if *is_mine {
-                            stats.mines_hit += 1;
-                            stats.lost = true;
-                            return stats;
-                        } else {
-                            stats.safe_moves += 1;
-                            let _ = board.reveal(pos);
-                            made_progress = true;
-                        }
-                    }
-                }
-                SolverAction::Flag(pos) => {
-                    if let Ok(Cell::Hidden(is_mine)) = board.get_cell(pos) {
-                        if *is_mine {
-                            let _ = board.toggle_flag(pos);
-                            made_progress = true;
-                        } else {
-                            // Incorrectly flagging a safe cell should count as a loss
-                            stats.lost = true;
-                            return stats;
-                        }
-                    }
-                }
-            }
+        if stats.lost {
+            return stats;
         }
 
         let current_revealed = board.revealed_count();
@@ -168,72 +204,50 @@ fn solve_single_game(board: &mut Board, solver: &dyn Solver) -> GameStats {
     stats
 }
 
-fn create_solvers() -> Vec<(Box<dyn Solver>, &'static str)> {
+fn create_solvers() -> Vec<(SolverChain, &'static str)> {
     vec![
         // SINGLE //
         // Counting
         (
-            Box::new(ChainSolver::new(vec![Box::new(CountingSolver)]).unwrap()),
+            SolverChain::new().add_deterministic(CountingSolver),
             "Counting Solver",
         ),
         // Matrix
         (
-            Box::new(ChainSolver::new(vec![Box::new(MatrixSolver)]).unwrap()),
+            SolverChain::new().add_deterministic(MatrixSolver),
             "Matrix Solver",
         ),
         // Tank 95%
         (
-            Box::new(
-                ChainSolver::new(vec![Box::new(TankSolver {
-                    min_confidence: 0.95,
-                })])
-                .unwrap(),
-            ),
+            SolverChain::new().add_probabilistic(TankSolver::new(0.95)),
             "Tank Solver 95%",
         ),
         // Tank 99%
         (
-            Box::new(
-                ChainSolver::new(vec![Box::new(TankSolver {
-                    min_confidence: 0.99,
-                })])
-                .unwrap(),
-            ),
+            SolverChain::new().add_probabilistic(TankSolver::new(0.99)),
             "Tank Solver 99%",
         ),
         // CHAINS //
         // Counting + Matrix
         (
-            Box::new(
-                ChainSolver::new(vec![Box::new(CountingSolver), Box::new(MatrixSolver)]).unwrap(),
-            ),
+            SolverChain::new()
+                .add_deterministic(CountingSolver)
+                .add_deterministic(MatrixSolver),
             "Counting + Matrix Chain Solver",
         ),
         // Matrix + Tank
         (
-            Box::new(
-                ChainSolver::new(vec![
-                    Box::new(MatrixSolver),
-                    Box::new(TankSolver {
-                        min_confidence: 0.95,
-                    }),
-                ])
-                .unwrap(),
-            ),
+            SolverChain::new()
+                .add_deterministic(MatrixSolver)
+                .add_probabilistic(TankSolver::new(0.95)),
             "Matrix + Tank Chain Solver",
         ),
         // FULL CHAIN //
         (
-            Box::new(
-                ChainSolver::new(vec![
-                    Box::new(CountingSolver),
-                    Box::new(MatrixSolver),
-                    Box::new(TankSolver {
-                        min_confidence: 0.95,
-                    }),
-                ])
-                .unwrap(),
-            ),
+            SolverChain::new()
+                .add_deterministic(CountingSolver)
+                .add_deterministic(MatrixSolver)
+                .add_probabilistic(TankSolver::new(0.95)),
             "Full (Counting + Matrix + Tank) Chain",
         ),
     ]
@@ -268,7 +282,7 @@ fn benchmark_solvers(c: &mut Criterion) {
                 b.iter_with_setup(
                     || Board::new(width, height, mines).unwrap(),
                     |mut board| {
-                        let stats = solve_single_game(&mut board, chain.as_ref());
+                        let stats = solve_single_game(&mut board, chain);
                         criterion::black_box(stats)
                     },
                 );
@@ -278,7 +292,7 @@ fn benchmark_solvers(c: &mut Criterion) {
             let mut aggregate = AggregateStats::default();
             for _ in 0..100 {
                 let mut board = Board::new(width, height, mines).unwrap();
-                let game_stats = solve_single_game(&mut board, chain.as_ref());
+                let game_stats = solve_single_game(&mut board, chain);
                 aggregate.games.push(game_stats);
             }
 
@@ -292,9 +306,6 @@ fn benchmark_solvers(c: &mut Criterion) {
             println!("Total safe moves: {}", aggregate.total_safe_moves());
             println!("Total mines hit: {}", aggregate.total_mines_hit());
             println!("Games played: {}", aggregate.games_played());
-
-            // Note: Detailed timing analysis would need to be handled separately
-            // as Criterion doesn't expose raw timing data in this way
         }
     }
 
