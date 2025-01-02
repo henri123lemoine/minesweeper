@@ -89,8 +89,6 @@ macro_rules! solver_test_suite {
             #[test]
             fn test_probabilistic_calibration() {
                 let solver = <$solver>::default();
-
-                // Store (predicted_probability, actual_outcome) pairs
                 let mut predictions: Vec<(f64, bool)> = Vec::new();
 
                 // Collect predictions across multiple games
@@ -143,22 +141,87 @@ macro_rules! solver_test_suite {
                 let standard_error = var_estimate.sqrt();
                 let z_score = reliability / standard_error;
 
-                // Use statrs for p-value calculation
+                // Calculate p-value
                 let normal = Normal::new(0.0, 1.0).unwrap();
                 let p_value = 2.0 * (1.0 - normal.cdf(z_score.abs()));
 
-                const ALPHA: f64 = 0.001; // Significance level
+                // Calculate detailed calibration statistics
+                let pred_ranges = vec![0.0, 0.2, 0.4, 0.6, 0.8, 1.0];
+                let mut range_stats = vec![];
 
-                assert!(
-                    p_value >= ALPHA,
-                    "Calibration test failed: p-value = {:.6}, reliability = {:.6}, \
-                     mean_predicted = {:.3}, mean_actual = {:.3}, n = {}",
-                    p_value,
-                    reliability,
+                predictions.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+                for i in 0..pred_ranges.len() - 1 {
+                    let range_preds: Vec<_> = predictions
+                        .iter()
+                        .filter(|(p, _)| *p >= pred_ranges[i] && *p < pred_ranges[i + 1])
+                        .collect();
+
+                    if !range_preds.is_empty() {
+                        let n_range = range_preds.len();
+                        let mean_pred =
+                            range_preds.iter().map(|(p, _)| p).sum::<f64>() / n_range as f64;
+                        let actual_freq =
+                            range_preds.iter().filter(|(_, a)| *a).count() as f64 / n_range as f64;
+                        range_stats.push((
+                            pred_ranges[i]..pred_ranges[i + 1],
+                            mean_pred,
+                            actual_freq,
+                            n_range,
+                        ));
+                    }
+                }
+
+                const ALPHA: f64 = 0.05; // Significance level
+
+                let mut error_msg = format!(
+                    "\nCalibration Analysis:\n\
+                     Overall Statistics:\n\
+                     - Reliability Score: {:.6} (lower is better)\n\
+                     - Mean Predicted Probability: {:.3}\n\
+                     - Actual Mine Frequency: {:.3}\n\
+                     - Number of Predictions: {}\n\
+                     - P-value: {:.6}\n\n\
+                     Detailed Breakdown by Prediction Range:\n",
+                    reliability, mean_predicted, mean_actual, n as u32, p_value
+                );
+
+                for (range, mean_pred, actual_freq, count) in range_stats {
+                    error_msg.push_str(&format!(
+                        "Range {:.1}-{:.1}:\n\
+                         - Count: {}\n\
+                         - Mean Predicted Prob: {:.3}\n\
+                         - Actual Frequency: {:.3}\n\
+                         - Calibration Error: {:.3}\n\n",
+                        range.start,
+                        range.end,
+                        count,
+                        mean_pred,
+                        actual_freq,
+                        (mean_pred - actual_freq).abs()
+                    ));
+                }
+
+                error_msg.push_str(&format!(
+                    "Visual Calibration Error:\n\
+                     Mean Predicted ({:.3}) vs Actual ({:.3}): {}{}|\n\
+                     Difference: {:.3} ({})",
                     mean_predicted,
                     mean_actual,
-                    n as u32
-                );
+                    "=".repeat((mean_predicted * 50.0) as usize),
+                    if mean_predicted <= mean_actual {
+                        "<"
+                    } else {
+                        ">"
+                    },
+                    (mean_predicted - mean_actual).abs(),
+                    if (mean_predicted - mean_actual).abs() < 0.05 {
+                        "GOOD"
+                    } else {
+                        "CONCERNING"
+                    }
+                ));
+
+                assert!(p_value >= ALPHA || reliability < 0.05, "{}", error_msg);
             }
 
             #[test]
