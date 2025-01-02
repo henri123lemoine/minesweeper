@@ -83,47 +83,82 @@ macro_rules! solver_test_suite {
         mod solver_tests {
             use super::*;
             use crate::{Board, Cell, Position};
+            use statrs::distribution::{ContinuousCDF, Normal};
             use std::collections::HashMap;
 
             #[test]
             fn test_probabilistic_calibration() {
                 let solver = <$solver>::default();
-                let mut total_predictions = HashMap::new();
-                let mut correct_predictions = HashMap::new();
 
-                // Run multiple games to collect statistics
+                // Store (predicted_probability, actual_outcome) pairs
+                let mut predictions: Vec<(f64, bool)> = Vec::new();
+
+                // Collect predictions across multiple games
                 for _ in 0..10000 {
                     let board = Board::new(8, 8, 10).unwrap();
                     let solver_board = SolverBoard::new(&board);
                     let result = solver.solve(&solver_board);
 
-                    // Bin predictions by confidence level
-                    for (pos, prob) in result.probabilities {
-                        let bin = (prob * 10.0).floor() as i32;
+                    for (pos, predicted_prob) in result.probabilities {
                         if let Ok(Cell::Hidden(is_mine)) = board.get_cell(pos) {
-                            *total_predictions.entry(bin).or_insert(0) += 1;
-                            if *is_mine == (prob >= 0.5) {
-                                *correct_predictions.entry(bin).or_insert(0) += 1;
-                            }
+                            predictions.push((predicted_prob, *is_mine));
                         }
                     }
                 }
 
-                // Check calibration
-                for bin in 0..10 {
-                    if let Some(&total) = total_predictions.get(&bin) {
-                        if total > 0 {
-                            let correct = *correct_predictions.get(&bin).unwrap_or(&0);
-                            let accuracy = correct as f64 / total as f64;
-                            let expected = (bin as f64 + 0.5) / 10.0;
-                            assert!(
-                                (accuracy - expected).abs() < 0.2,
-                                "Poor calibration for confidence bin {}",
-                                bin
-                            );
-                        }
-                    }
-                }
+                let n = predictions.len() as f64;
+
+                // Calculate calibration error using Brier score decomposition
+                let reliability = predictions
+                    .iter()
+                    .map(|(pred, actual)| {
+                        let actual = if *actual { 1.0 } else { 0.0 };
+                        (pred - actual).powi(2)
+                    })
+                    .sum::<f64>()
+                    / n;
+
+                let (mean_predicted, mean_actual) = predictions.iter().fold(
+                    (0.0, 0.0),
+                    |(sum_pred, sum_actual), (pred, actual)| {
+                        (
+                            sum_pred + pred,
+                            sum_actual + if *actual { 1.0 } else { 0.0 },
+                        )
+                    },
+                );
+                let (mean_predicted, mean_actual) = (mean_predicted / n, mean_actual / n);
+
+                // Calculate standard error under null hypothesis
+                let var_estimate = predictions
+                    .iter()
+                    .map(|(p, a)| {
+                        let a = if *a { 1.0 } else { 0.0 };
+                        let e = (p - a).powi(2) - reliability;
+                        e.powi(2)
+                    })
+                    .sum::<f64>()
+                    / (n.powi(2));
+
+                let standard_error = var_estimate.sqrt();
+                let z_score = reliability / standard_error;
+
+                // Use statrs for p-value calculation
+                let normal = Normal::new(0.0, 1.0).unwrap();
+                let p_value = 2.0 * (1.0 - normal.cdf(z_score.abs()));
+
+                const ALPHA: f64 = 0.001; // Significance level
+
+                assert!(
+                    p_value >= ALPHA,
+                    "Calibration test failed: p-value = {:.6}, reliability = {:.6}, \
+                     mean_predicted = {:.3}, mean_actual = {:.3}, n = {}",
+                    p_value,
+                    reliability,
+                    mean_predicted,
+                    mean_actual,
+                    n as u32
+                );
             }
 
             #[test]
