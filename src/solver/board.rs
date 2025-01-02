@@ -20,6 +20,20 @@ impl<'a> SolverBoard<'a> {
         })
     }
 
+    /// Returns true if no cells have been revealed yet
+    pub fn is_start(&self) -> bool {
+        !self
+            .board
+            .cells
+            .values()
+            .any(|cell| matches!(cell, Cell::Revealed(_)))
+    }
+
+    /// Returns the probability of any cell being a mine
+    pub fn mine_density(&self) -> f64 {
+        self.board.mines_count() as f64 / (self.board.width * self.board.height) as f64
+    }
+
     pub fn dimensions(&self) -> (u32, u32) {
         self.board.dimensions()
     }
