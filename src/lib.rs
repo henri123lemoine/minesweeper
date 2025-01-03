@@ -12,3 +12,6 @@ pub use solver::{
     CountingSolver, DeterministicResult, DeterministicSolver, MatrixSolver, ProbabilisticResult,
     ProbabilisticSolver, Solver, SolverBoard, SolverChain, TankSolver,
 };
+
+#[cfg(test)]
+pub use solver::test_utils;

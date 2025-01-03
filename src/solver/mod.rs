@@ -2,18 +2,21 @@ mod board;
 mod counting;
 mod matrix;
 mod tank;
+#[cfg(any(test, feature = "test-utils"))]
+pub mod test_utils;
 mod traits;
 
 pub use crate::Position;
 pub use board::SolverBoard;
 pub use counting::CountingSolver;
 pub use matrix::MatrixSolver;
-use std::collections::HashMap;
 pub use tank::TankSolver;
 pub use traits::{
     DeterministicResult, DeterministicSolver, ProbabilisticResult, ProbabilisticSolver,
     ProbabilityMap, Solver,
 };
+
+use std::collections::HashMap;
 
 #[doc(hidden)]
 pub use crate::solver_test_suite;
