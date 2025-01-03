@@ -147,25 +147,19 @@ fn solve_single_game(board: &mut Board, solver: &SolverChain) -> GameStats {
 
         let det_result = match chain_result {
             ChainResult::Deterministic(result) => result,
-            ChainResult::Probabilistic(prob_result) => {
-                if !prob_result.deterministic.mines.is_empty()
-                    || !prob_result.deterministic.safe.is_empty()
-                {
-                    prob_result.deterministic
-                } else if let Some(&(pos, prob)) = prob_result.probabilities.first() {
-                    let mut result = DeterministicResult::default();
-                    // Use highest probability action
-                    if prob >= 0.95 {
-                        result.mines.insert(pos);
-                    } else {
-                        result.safe.insert(pos);
-                    }
-                    result
-                } else {
-                    DeterministicResult::default()
+            ChainResult::Probabilistic {
+                position,
+                confidence,
+            } => {
+                // Convert probabilistic move into deterministic result
+                let mut result = DeterministicResult::default();
+                // If we're confident enough, try the move
+                if confidence >= 0.95 {
+                    result.safe.insert(position);
                 }
+                result
             }
-            ChainResult::NoSolution => DeterministicResult::default(),
+            ChainResult::NoMoves => DeterministicResult::default(),
         };
 
         if det_result.mines.is_empty() && det_result.safe.is_empty() {
@@ -209,45 +203,44 @@ fn create_solvers() -> Vec<(SolverChain, &'static str)> {
         // SINGLE //
         // Counting
         (
-            SolverChain::new().add_deterministic(CountingSolver),
+            SolverChain::new(0.0).add_deterministic(CountingSolver),
             "Counting Solver",
         ),
         // Matrix
         (
-            SolverChain::new().add_deterministic(MatrixSolver),
+            SolverChain::new(0.0).add_deterministic(MatrixSolver),
             "Matrix Solver",
         ),
-        // Tank 95%
+        // Tank with different chain thresholds
         (
-            SolverChain::new().add_probabilistic(TankSolver::new(0.95)),
+            SolverChain::new(0.95).add_probabilistic(TankSolver),
             "Tank Solver 95%",
         ),
-        // Tank 99%
         (
-            SolverChain::new().add_probabilistic(TankSolver::new(0.99)),
+            SolverChain::new(0.99).add_probabilistic(TankSolver),
             "Tank Solver 99%",
         ),
         // CHAINS //
         // Counting + Matrix
         (
-            SolverChain::new()
+            SolverChain::new(0.0)
                 .add_deterministic(CountingSolver)
                 .add_deterministic(MatrixSolver),
             "Counting + Matrix Chain Solver",
         ),
         // Matrix + Tank
         (
-            SolverChain::new()
+            SolverChain::new(0.95)
                 .add_deterministic(MatrixSolver)
-                .add_probabilistic(TankSolver::new(0.95)),
+                .add_probabilistic(TankSolver),
             "Matrix + Tank Chain Solver",
         ),
         // FULL CHAIN //
         (
-            SolverChain::new()
+            SolverChain::new(0.95)
                 .add_deterministic(CountingSolver)
                 .add_deterministic(MatrixSolver)
-                .add_probabilistic(TankSolver::new(0.95)),
+                .add_probabilistic(TankSolver),
             "Full (Counting + Matrix + Tank) Chain",
         ),
     ]
