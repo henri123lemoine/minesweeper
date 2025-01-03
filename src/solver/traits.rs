@@ -2,40 +2,36 @@ use super::board::SolverBoard;
 use crate::Position;
 use std::collections::HashSet;
 
-/// Represents positions that a solver has determined to be mines or safe
 #[derive(Debug, Clone, Default)]
 pub struct DeterministicResult {
-    /// Positions that are definitely mines
     pub mines: HashSet<Position>,
-    /// Positions that are definitely safe
     pub safe: HashSet<Position>,
 }
 
-/// Represents probabilistic analysis of board positions
-#[derive(Debug, Clone, Default)]
-pub struct ProbabilisticResult {
-    /// Positions that are definitely mines or safe (100% certain)
-    pub deterministic: DeterministicResult,
-    /// For uncertain positions, maps position to probability of being a mine
+#[derive(Debug, Clone)]
+pub struct ProbabilityMap {
+    /// Maps positions to their probability of being a mine
     pub probabilities: Vec<(Position, f64)>,
 }
 
-/// Base trait for all solvers
+#[derive(Debug, Clone)]
+pub enum ProbabilisticResult {
+    /// Solver found some certain moves
+    Certain(DeterministicResult),
+    /// Solver could only determine probabilities
+    Uncertain(ProbabilityMap),
+}
+
 pub trait Solver {
     fn name(&self) -> &str;
 }
 
-/// Trait for solvers that make deterministic decisions
 pub trait DeterministicSolver: Solver {
     fn solve(&self, board: &SolverBoard) -> DeterministicResult;
 }
 
-/// Trait for solvers that make probabilistic decisions
 pub trait ProbabilisticSolver: Solver {
-    fn solve(&self, board: &SolverBoard) -> ProbabilisticResult;
-
-    /// Returns the solver's confidence threshold for making deterministic decisions
-    fn confidence_threshold(&self) -> f64;
+    fn assess(&self, board: &SolverBoard) -> ProbabilisticResult;
 }
 
 #[doc(hidden)]
@@ -95,11 +91,12 @@ macro_rules! solver_test_suite {
                 for _ in 0..10000 {
                     let board = Board::new(8, 8, 10).unwrap();
                     let solver_board = SolverBoard::new(&board);
-                    let result = solver.solve(&solver_board);
 
-                    for (pos, predicted_prob) in result.probabilities {
-                        if let Ok(Cell::Hidden(is_mine)) = board.get_cell(pos) {
-                            predictions.push((predicted_prob, *is_mine));
+                    if let ProbabilisticResult::Uncertain(prob_map) = solver.assess(&solver_board) {
+                        for (pos, predicted_prob) in prob_map.probabilities {
+                            if let Ok(Cell::Hidden(is_mine)) = board.get_cell(pos) {
+                                predictions.push((predicted_prob, *is_mine));
+                            }
                         }
                     }
                 }
@@ -218,15 +215,13 @@ macro_rules! solver_test_suite {
                 let solver = <$solver>::default();
                 let board = Board::new(3, 3, 1).unwrap();
                 let solver_board = SolverBoard::new(&board);
-                let result = solver.solve(&solver_board);
 
-                assert!(
-                    result
-                        .deterministic
-                        .mines
-                        .is_disjoint(&result.deterministic.safe),
-                    "Deterministic results contain contradictions"
-                );
+                if let ProbabilisticResult::Certain(det_result) = solver.assess(&solver_board) {
+                    assert!(
+                        det_result.mines.is_disjoint(&det_result.safe),
+                        "Deterministic results contain contradictions"
+                    );
+                }
             }
         }
     };
