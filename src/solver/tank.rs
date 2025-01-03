@@ -159,30 +159,6 @@ impl TankSolver {
 
         probabilities
     }
-
-    /// Separates definite results from probabilistic ones
-    fn analyze_probabilities(&self, probabilities: HashMap<Position, f64>) -> ProbabilisticResult {
-        let mut result = ProbabilisticResult::default();
-        let epsilon = 1e-10;
-
-        for (pos, prob) in probabilities {
-            if (prob - 0.0).abs() < epsilon {
-                result.deterministic.safe.insert(pos);
-            } else if (prob - 1.0).abs() < epsilon {
-                result.deterministic.mines.insert(pos);
-            } else {
-                result.probabilities.push((pos, prob));
-            }
-        }
-
-        result.probabilities.sort_unstable_by(|a, b| {
-            let a_certainty = if a.1 < 0.5 { 1.0 - a.1 } else { a.1 };
-            let b_certainty = if b.1 < 0.5 { 1.0 - b.1 } else { b.1 };
-            b_certainty.partial_cmp(&a_certainty).unwrap()
-        });
-
-        result
-    }
 }
 
 impl Solver for TankSolver {
