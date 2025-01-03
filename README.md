@@ -1,6 +1,8 @@
 # Rust Minesweeper Project
 
-An implementation of Minesweeper in Rust, featuring procedural generation, infinite boards, solvers, and multiplayer functionality (all WIP).
+![GitHub](https://img.shields.io/github/license/henri123lemoine/minesweeper)
+
+An implementation of Minesweeper in Rust.
 
 ## Usage
 
