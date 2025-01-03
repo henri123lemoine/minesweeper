@@ -16,7 +16,6 @@ quote = "1.0.38"
 rand = "0.8.5"
 syn = { version = "2.0.93", features = ["full", "extra-traits"] }
 thiserror = "2.0.9"
-minesweeper-solver-derive = { path = "./solver-derive" }
 statrs = "0.18.0"
 proptest = "1.6.0"
 

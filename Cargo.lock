@@ -430,7 +430,6 @@ dependencies = [
  "criterion",
  "darling",
  "itertools 0.14.0",
- "minesweeper-solver-derive",
  "ndarray",
  "proc-macro2",
  "proptest",
@@ -440,15 +439,6 @@ dependencies = [
  "syn",
  "thiserror",
  "trybuild",
-]
-
-[[package]]
-name = "minesweeper-solver-derive"
-version = "0.1.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
 ]
 
 [[package]]
