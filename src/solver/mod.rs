@@ -8,24 +8,29 @@ pub use crate::Position;
 pub use board::SolverBoard;
 pub use counting::CountingSolver;
 pub use matrix::MatrixSolver;
+use std::collections::HashMap;
 pub use tank::TankSolver;
 pub use traits::{
-    DeterministicResult, DeterministicSolver, ProbabilisticResult, ProbabilisticSolver, Solver,
+    DeterministicResult, DeterministicSolver, ProbabilisticResult, ProbabilisticSolver,
+    ProbabilityMap, Solver,
 };
 
 #[doc(hidden)]
 pub use crate::solver_test_suite;
 
-/// Represents a chain of solvers that can include both deterministic and probabilistic approaches
-#[derive(Default)]
 pub struct SolverChain {
     deterministic_solvers: Vec<Box<dyn DeterministicSolver>>,
     probabilistic_solvers: Vec<Box<dyn ProbabilisticSolver>>,
+    confidence_threshold: f64,
 }
 
 impl SolverChain {
-    pub fn new() -> Self {
-        Self::default()
+    pub fn new(confidence_threshold: f64) -> Self {
+        Self {
+            deterministic_solvers: Vec::new(),
+            probabilistic_solvers: Vec::new(),
+            confidence_threshold,
+        }
     }
 
     pub fn add_deterministic<S: DeterministicSolver + 'static>(mut self, solver: S) -> Self {
@@ -38,9 +43,8 @@ impl SolverChain {
         self
     }
 
-    /// Attempts to solve the board using all available solvers
     pub fn solve(&self, board: &SolverBoard) -> ChainResult {
-        // First try all deterministic solvers
+        // First try deterministic solvers
         for solver in &self.deterministic_solvers {
             let result = solver.solve(board);
             if !result.mines.is_empty() || !result.safe.is_empty() {
@@ -48,53 +52,81 @@ impl SolverChain {
             }
         }
 
-        // If no deterministic solution, try probabilistic solvers
-        let mut best_probabilistic: Option<ProbabilisticResult> = None;
-        let mut best_confidence = 0.0;
+        // Try probabilistic solvers
+        let mut probability_maps = Vec::new();
 
         for solver in &self.probabilistic_solvers {
-            let result = solver.solve(board);
-
-            // If solver found any deterministic results, return those immediately
-            if !result.deterministic.mines.is_empty() || !result.deterministic.safe.is_empty() {
-                return ChainResult::Deterministic(result.deterministic);
-            }
-
-            // Track the highest confidence probabilistic result
-            if let Some((_, confidence)) = result
-                .probabilities
-                .iter()
-                .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
-            {
-                if *confidence > best_confidence {
-                    best_confidence = *confidence;
-                    best_probabilistic = Some(result);
+            match solver.assess(board) {
+                // If any solver finds certainty, use it immediately
+                ProbabilisticResult::Certain(result) => {
+                    return ChainResult::Deterministic(result);
+                }
+                // Collect uncertain results for later combination
+                ProbabilisticResult::Uncertain(probs) => {
+                    probability_maps.push(probs);
                 }
             }
         }
 
-        // Return the best probabilistic result if we found one
-        best_probabilistic.map_or(ChainResult::NoSolution, ChainResult::Probabilistic)
+        // If we got here, we only have uncertain results
+        if !probability_maps.is_empty() {
+            let combined = self.combine_probability_maps(probability_maps);
+
+            // Find the most confident move  TODO: Verify this is the best way to choose a move
+            if let Some((pos, prob)) = combined.probabilities.iter().max_by(|(_, a), (_, b)| {
+                let a_conf = (a - 0.5).abs();
+                let b_conf = (b - 0.5).abs();
+                a_conf.partial_cmp(&b_conf).unwrap()
+            }) {
+                let confidence = (prob - 0.5).abs() * 2.0; // Scale to 0-1
+                if confidence >= self.confidence_threshold {
+                    return ChainResult::Probabilistic {
+                        position: *pos,
+                        confidence,
+                    };
+                }
+            }
+        }
+
+        ChainResult::NoMoves
+    }
+
+    fn combine_probability_maps(&self, maps: Vec<ProbabilityMap>) -> ProbabilityMap {
+        let mut position_probs: HashMap<Position, Vec<f64>> = HashMap::new();
+
+        // Collect all probabilities for each position
+        for map in maps {
+            for (pos, prob) in map.probabilities {
+                position_probs.entry(pos).or_default().push(prob);
+            }
+        }
+
+        // Average probabilities
+        let probabilities = position_probs
+            .into_iter()
+            .map(|(pos, probs)| {
+                let avg = probs.iter().sum::<f64>() / probs.len() as f64;
+                (pos, avg)
+            })
+            .collect();
+
+        ProbabilityMap { probabilities }
     }
 }
 
-/// Result from attempting to solve a board using the solver chain
 #[derive(Debug, Clone)]
 pub enum ChainResult {
-    /// A deterministic solution was found
     Deterministic(DeterministicResult),
-    /// Only probabilistic solutions were found
-    Probabilistic(ProbabilisticResult),
-    /// No solution could be found
-    NoSolution,
+    Probabilistic { position: Position, confidence: f64 },
+    NoMoves,
 }
 
 /// Factory function to create a standard solver chain with recommended configuration
 pub fn create_default_chain() -> SolverChain {
-    SolverChain::new()
+    SolverChain::new(0.95)
         .add_deterministic(CountingSolver)
         .add_deterministic(MatrixSolver)
-        .add_probabilistic(TankSolver::new(0.95))
+        .add_probabilistic(TankSolver)
 }
 
 #[cfg(test)]
@@ -110,7 +142,7 @@ mod tests {
 
         // Initial move should come from a probabilistic solver
         match chain.solve(&solver_board) {
-            ChainResult::Probabilistic(_) => (),
+            ChainResult::Probabilistic { .. } => {}
             _ => panic!("Expected probabilistic solution for initial move"),
         }
     }
@@ -138,9 +170,9 @@ mod tests {
 
     #[test]
     fn test_chain_composition() {
-        let chain = SolverChain::new()
+        let chain = SolverChain::new(0.95)
             .add_deterministic(CountingSolver)
-            .add_probabilistic(TankSolver::new(0.99))
+            .add_probabilistic(TankSolver)
             .add_deterministic(MatrixSolver);
 
         let board = Board::new(8, 8, 10).unwrap();
