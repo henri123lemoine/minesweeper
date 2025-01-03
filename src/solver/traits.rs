@@ -42,9 +42,10 @@ pub trait ProbabilisticSolver: Solver {
 #[macro_export]
 macro_rules! solver_test_suite {
     ($solver:ty, deterministic) => {
+        #[cfg(test)]
         mod solver_tests {
             use super::*;
-            use crate::{Board, Cell, Position};
+            use $crate::{Board, Cell, Position};
 
             #[test]
             fn test_deterministic_consistency() {
@@ -80,11 +81,10 @@ macro_rules! solver_test_suite {
     };
 
     ($solver:ty, probabilistic) => {
+        #[cfg(test)]
         mod solver_tests {
             use super::*;
-            use crate::{Board, Cell, Position};
-            use statrs::distribution::{ContinuousCDF, Normal};
-            use std::collections::HashMap;
+            use crate::{Board, Cell};
 
             #[test]
             fn test_probabilistic_calibration() {
