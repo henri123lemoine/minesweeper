@@ -1,6 +1,8 @@
 use super::board::{SolverBoard, SolverCell};
 use super::solver_test_suite;
-use super::traits::{DeterministicResult, ProbabilisticResult, ProbabilisticSolver, Solver};
+use super::traits::{
+    DeterministicResult, ProbabilisticResult, ProbabilisticSolver, ProbabilityMap, Solver,
+};
 use crate::Position;
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -13,26 +15,10 @@ struct MineConstraint {
 
 /// Tank Solver implementation based on Simon Tatham's algorithm
 /// https://www.chiark.greenend.org.uk/~sgtatham/mines/#solve
-#[derive(Debug)]
-pub struct TankSolver {
-    confidence_threshold: f64,
-}
-
-impl Default for TankSolver {
-    fn default() -> Self {
-        Self {
-            confidence_threshold: 0.95,
-        }
-    }
-}
+#[derive(Debug, Default)]
+pub struct TankSolver;
 
 impl TankSolver {
-    pub fn new(confidence_threshold: f64) -> Self {
-        Self {
-            confidence_threshold,
-        }
-    }
-
     /// Collects all constraints from the board state
     fn get_constraints(&self, board: &SolverBoard) -> Vec<MineConstraint> {
         let mut constraints = Vec::new();
@@ -168,30 +154,59 @@ impl Solver for TankSolver {
 }
 
 impl ProbabilisticSolver for TankSolver {
-    fn solve(&self, board: &SolverBoard) -> ProbabilisticResult {
+    fn assess(&self, board: &SolverBoard) -> ProbabilisticResult {
         // Special case: opening move
         if board.is_start() {
             let (width, height) = board.dimensions();
             let center_pos = Position::new((width / 2) as i32, (height / 2) as i32);
 
-            return ProbabilisticResult {
-                deterministic: DeterministicResult::default(),
+            return ProbabilisticResult::Uncertain(ProbabilityMap {
                 probabilities: vec![(center_pos, board.mine_density())],
-            };
+            });
         }
 
         // Get constraints and calculate probabilities
         let constraints = self.get_constraints(board);
         if constraints.is_empty() {
-            return ProbabilisticResult::default();
+            return ProbabilisticResult::Uncertain(ProbabilityMap {
+                probabilities: Vec::new(),
+            });
         }
 
         let probabilities = self.flood_probabilities(&constraints);
-        self.analyze_probabilities(probabilities)
-    }
 
-    fn confidence_threshold(&self) -> f64 {
-        self.confidence_threshold
+        // Find any certain positions
+        let mut certain = DeterministicResult::default();
+        let mut uncertain = Vec::new();
+        let epsilon = 1e-10;
+
+        let mut found_certain = false;
+        for (pos, prob) in probabilities {
+            if (prob - 0.0).abs() < epsilon {
+                certain.safe.insert(pos);
+                found_certain = true;
+            } else if (prob - 1.0).abs() < epsilon {
+                certain.mines.insert(pos);
+                found_certain = true;
+            } else {
+                uncertain.push((pos, prob));
+            }
+        }
+
+        if found_certain {
+            ProbabilisticResult::Certain(certain)
+        } else {
+            // Sort by confidence (distance from 0.5)
+            uncertain.sort_unstable_by(|a, b| {
+                let a_cert = (a.1 - 0.5).abs();
+                let b_cert = (b.1 - 0.5).abs();
+                b_cert.partial_cmp(&a_cert).unwrap()
+            });
+
+            ProbabilisticResult::Uncertain(ProbabilityMap {
+                probabilities: uncertain,
+            })
+        }
     }
 }
 
@@ -205,17 +220,17 @@ mod tests {
     #[test]
     fn test_opening_move() {
         let board = Board::new(8, 8, 10).unwrap();
-        let solver = TankSolver::default();
+        let solver = TankSolver;
         let solver_board = SolverBoard::new(&board);
 
-        let result = solver.solve(&solver_board);
-        assert!(result.deterministic.mines.is_empty());
-        assert!(result.deterministic.safe.is_empty());
-        assert_eq!(result.probabilities.len(), 1);
-
-        // Should suggest center as opening move
-        let (pos, _) = result.probabilities[0];
-        assert_eq!(pos, Position::new(4, 4));
+        match solver.assess(&solver_board) {
+            ProbabilisticResult::Uncertain(prob_map) => {
+                assert_eq!(prob_map.probabilities.len(), 1);
+                let (pos, _) = prob_map.probabilities[0];
+                assert_eq!(pos, Position::new(4, 4));
+            }
+            _ => panic!("Expected uncertain result for opening move"),
+        }
     }
 
     #[test]
@@ -223,7 +238,7 @@ mod tests {
         let mut board = Board::new(3, 3, 1).unwrap();
         board.reveal(Position::new(1, 1)).unwrap();
 
-        let solver = TankSolver::default();
+        let solver = TankSolver;
         let solver_board = SolverBoard::new(&board);
         let constraints = solver.get_constraints(&solver_board);
 
@@ -240,14 +255,18 @@ mod tests {
         // Create a known board state where one position must be a mine
         board.reveal(Position::new(1, 1)).unwrap();
         if let Ok(Cell::Revealed(1)) = board.get_cell(Position::new(1, 1)) {
-            let solver = TankSolver::default();
+            let solver = TankSolver;
             let solver_board = SolverBoard::new(&board);
-            let result = solver.solve(&solver_board);
 
-            assert!(
-                !result.deterministic.mines.is_empty() || !result.deterministic.safe.is_empty(),
-                "Should find at least one definite result"
-            );
+            match solver.assess(&solver_board) {
+                ProbabilisticResult::Certain(result) => {
+                    assert!(
+                        !result.mines.is_empty() || !result.safe.is_empty(),
+                        "Should find at least one definite result"
+                    );
+                }
+                _ => panic!("Expected certain result"),
+            }
         }
     }
 
@@ -256,7 +275,7 @@ mod tests {
         let mut board = Board::new(3, 3, 1).unwrap();
         board.reveal(Position::new(1, 1)).unwrap();
 
-        let solver = TankSolver::default();
+        let solver = TankSolver;
         let solver_board = SolverBoard::new(&board);
         let constraints = solver.get_constraints(&solver_board);
         let probabilities = solver.flood_probabilities(&constraints);
