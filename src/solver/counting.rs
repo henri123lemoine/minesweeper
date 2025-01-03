@@ -11,7 +11,6 @@ use crate::Position;
 pub struct CountingSolver;
 
 impl CountingSolver {
-    /// Analyzes a single cell and its neighbors to find definite mines and safe squares
     fn analyze_cell(&self, board: &SolverBoard, pos: Position) -> DeterministicResult {
         let mut result = DeterministicResult::default();
 
@@ -21,36 +20,39 @@ impl CountingSolver {
             _ => return result,
         };
 
-        let neighbors: Vec<_> = board.neighbors(pos);
-        let mut unknown_neighbors = Vec::new();
-        let mut mine_count = 0;
+        // Get all neighbors
+        let neighbors = board.neighbors(pos);
 
-        // Count known mines and collect unknown positions
-        for &npos in &neighbors {
+        // Count and collect unknown and flagged neighbors
+        let mut unknown_positions = Vec::new();
+        let mut flagged_count = 0;
+
+        for npos in neighbors {
             match board.get(npos) {
-                Some(SolverCell::Covered) => unknown_neighbors.push(npos),
-                Some(SolverCell::Flagged) => mine_count += 1,
+                Some(SolverCell::Covered) => unknown_positions.push(npos),
+                Some(SolverCell::Flagged) => flagged_count += 1,
                 _ => {}
             }
         }
 
-        // Case 1: If cell=0, all neighbors must be safe
+        let unknown_count = unknown_positions.len();
+        let remaining_mines = cell_value.saturating_sub(flagged_count);
+
+        // Case 1: Zero cell - all neighbors are safe
         if cell_value == 0 {
-            result.safe.extend(unknown_neighbors);
+            result.safe.extend(unknown_positions);
             return result;
         }
 
-        let remaining_mines = cell_value as usize - mine_count;
-
-        // Case 2: If remaining mines equals number of unknown neighbors, they must all be mines
-        if remaining_mines == unknown_neighbors.len() {
-            result.mines.extend(unknown_neighbors);
-            return result;
-        }
-
-        // Case 3: If we've found all mines, remaining unknowns must be safe
+        // Case 2: If we've found all mines, remaining unknowns must be safe
         if remaining_mines == 0 {
-            result.safe.extend(unknown_neighbors);
+            result.safe.extend(unknown_positions);
+            return result;
+        }
+
+        // Case 3: If remaining mines equals number of unknown cells, they must all be mines
+        if remaining_mines as usize == unknown_count && unknown_count > 0 {
+            result.mines.extend(unknown_positions);
             return result;
         }
 
@@ -84,101 +86,149 @@ solver_test_suite!(CountingSolver, deterministic);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Board;
+    use crate::{Board, Cell};
+    use std::collections::HashSet;
+
+    /// Helper to create a test board with a specific configuration
+    fn create_test_board(width: u32, height: u32) -> Board {
+        Board::new(width, height, 0).unwrap()
+    }
+
+    /// Helper to set a cell's revealed value
+    fn reveal_cell(board: &mut Board, pos: Position, value: u8) {
+        board.cells.insert(pos, Cell::Revealed(value));
+    }
+
+    /// Helper to set a cell as flagged
+    fn flag_cell(board: &mut Board, pos: Position) {
+        board.cells.insert(pos, Cell::Flagged(true));
+    }
 
     #[test]
     fn test_zero_cell() {
-        let mut board = Board::new(3, 3, 1).unwrap();
+        let mut board = create_test_board(3, 3);
+        let center = Position::new(1, 1);
 
-        // Create a known board state with a zero cell
-        board.cells.clear();
-        for x in 0..3 {
-            for y in 0..3 {
-                board
-                    .cells
-                    .insert(Position::new(x, y), crate::Cell::Hidden(false));
-            }
-        }
-
-        // Reveal center cell (should be 0 as no adjacent mines)
-        board.reveal(Position::new(1, 1)).unwrap();
+        // Reveal center as 0
+        reveal_cell(&mut board, center, 0);
 
         let solver = CountingSolver;
         let solver_board = SolverBoard::new(&board);
         let result = solver.solve(&solver_board);
 
-        // All neighbors of a zero should be marked safe
+        // All neighbors should be safe
+        let expected_safe: HashSet<_> = center
+            .neighbors()
+            .filter(|&pos| board.is_within_bounds(pos))
+            .collect();
+
         assert_eq!(
-            result.safe.len(),
-            8,
+            result.safe, expected_safe,
             "All neighbors of a zero should be safe"
         );
-        assert!(result.mines.is_empty(), "No mines should be identified");
+        assert!(
+            result.mines.is_empty(),
+            "Zero cell should not identify any mines"
+        );
     }
 
     #[test]
-    fn test_fully_constrained_cell() {
-        let mut board = Board::new(3, 3, 2).unwrap();
+    fn test_simple_constraint() {
+        let mut board = create_test_board(2, 2);
 
-        // Create a known board state where center cell has exactly 2 mine neighbors
-        board.cells.clear();
-        board
-            .cells
-            .insert(Position::new(0, 0), crate::Cell::Hidden(true));
-        board
-            .cells
-            .insert(Position::new(0, 1), crate::Cell::Hidden(true));
-        for x in 0..3 {
-            for y in 0..3 {
-                if !matches!(
-                    board.get_cell(Position::new(x, y)),
-                    Ok(crate::Cell::Hidden(true))
-                ) {
-                    board
-                        .cells
-                        .insert(Position::new(x, y), crate::Cell::Hidden(false));
-                }
-            }
-        }
-
-        // Reveal center cell
-        board.reveal(Position::new(1, 1)).unwrap();
+        // Reveal three cells, leaving only one unknown
+        reveal_cell(&mut board, Position::new(0, 0), 1);
+        reveal_cell(&mut board, Position::new(1, 0), 0);
+        reveal_cell(&mut board, Position::new(1, 1), 0);
+        // Position (0,1) is left unknown and must be a mine
 
         let solver = CountingSolver;
         let solver_board = SolverBoard::new(&board);
         let result = solver.solve(&solver_board);
 
-        assert_eq!(result.mines.len(), 2, "Should identify exactly 2 mines");
-        assert!(result.mines.contains(&Position::new(0, 0)));
-        assert!(result.mines.contains(&Position::new(0, 1)));
+        let expected_mines = HashSet::from([Position::new(0, 1)]);
+        assert_eq!(
+            result.mines, expected_mines,
+            "Should identify single constrained mine"
+        );
     }
 
     #[test]
-    fn test_partially_constrained_cell() {
-        let mut board = Board::new(3, 3, 1).unwrap();
+    fn test_corner_constraint() {
+        let mut board = create_test_board(3, 3);
 
-        // Create a board state with one known mine and one revealed number
-        board.cells.clear();
-        board
-            .cells
-            .insert(Position::new(0, 0), crate::Cell::Hidden(true));
-        board
-            .cells
-            .insert(Position::new(1, 1), crate::Cell::Revealed(1));
+        // Set up corner with a '1' and reveal adjacent cells as '0'
+        reveal_cell(&mut board, Position::new(0, 0), 1);
+        reveal_cell(&mut board, Position::new(1, 0), 0);
+        reveal_cell(&mut board, Position::new(0, 1), 0);
+        // Position (1,1) is left unknown and must be a mine
 
         let solver = CountingSolver;
         let solver_board = SolverBoard::new(&board);
         let result = solver.solve(&solver_board);
 
-        // Should identify remaining neighbors as safe since we know where the one mine is
-        for pos in Position::new(1, 1).neighbors() {
-            if pos != Position::new(0, 0) && board.is_within_bounds(pos) {
-                assert!(
-                    result.safe.contains(&pos),
-                    "Position {:?} should be marked safe",
-                    pos
-                );
-            }
-        }
+        let expected_mines = HashSet::from([Position::new(1, 1)]);
+        assert_eq!(
+            result.mines, expected_mines,
+            "Should identify corner-adjacent mine"
+        );
+    }
+
+    #[test]
+    fn test_flag_interaction() {
+        let mut board = create_test_board(3, 3);
+
+        // Reveal center with 2 mines
+        reveal_cell(&mut board, Position::new(1, 1), 2);
+        // Flag one neighbor
+        flag_cell(&mut board, Position::new(0, 0));
+        // One more mine must be among the remaining neighbors
+
+        let solver = CountingSolver;
+        let solver_board = SolverBoard::new(&board);
+        let result = solver.solve(&solver_board);
+
+        // The solver can't determine which remaining cell has the mine
+        assert!(
+            result.mines.is_empty(),
+            "Cannot determine exact mine location"
+        );
+        assert!(
+            result.safe.is_empty(),
+            "Cannot determine safe cells with remaining mine"
+        );
+    }
+
+    #[test]
+    fn test_exhaustion() {
+        let mut board = create_test_board(3, 3);
+
+        // Reveal a '2' and flag both its mines
+        reveal_cell(&mut board, Position::new(1, 1), 2);
+        flag_cell(&mut board, Position::new(0, 0));
+        flag_cell(&mut board, Position::new(2, 2));
+
+        let solver = CountingSolver;
+        let solver_board = SolverBoard::new(&board);
+        let result = solver.solve(&solver_board);
+
+        // All unflagged neighbors must be safe
+        let expected_safe: HashSet<_> = Position::new(1, 1)
+            .neighbors()
+            .filter(|&pos| {
+                board.is_within_bounds(pos)
+                    && pos != Position::new(0, 0)
+                    && pos != Position::new(2, 2)
+            })
+            .collect();
+
+        assert_eq!(
+            result.safe, expected_safe,
+            "Should identify all remaining cells as safe"
+        );
+        assert!(
+            result.mines.is_empty(),
+            "Should not identify additional mines"
+        );
     }
 }
