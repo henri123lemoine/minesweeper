@@ -1,8 +1,8 @@
 mod board;
 mod counting;
 mod matrix;
+pub mod solver_validation;
 mod tank;
-#[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;
 mod traits;
 

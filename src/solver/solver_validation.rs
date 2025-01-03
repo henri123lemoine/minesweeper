@@ -1,6 +1,6 @@
-#![cfg(feature = "test-utils")]
+#![cfg(test)]
 
-use minesweeper::{
+use crate::{
     solver::test_utils::{
         validate_deterministic_solver, validate_probabilistic_solver, validate_solver_chain,
         TestBoardConfig, TestBoardGenerator,
@@ -17,7 +17,7 @@ fn test_counting_solver_extensive() {
         revealed_percentage: 0.3,
     };
     let mut generator = TestBoardGenerator::with_seed(config, 12345);
-    let solver = CountingSolver::default();
+    let solver = CountingSolver;
 
     // Generate and test 10,000 boards
     let test_cases = generator.generate_batch(10_000);
@@ -46,7 +46,7 @@ fn test_matrix_solver_extensive() {
         revealed_percentage: 0.3,
     };
     let mut generator = TestBoardGenerator::with_seed(config, 12345);
-    let solver = MatrixSolver::default();
+    let solver = MatrixSolver;
 
     // Generate and test 10,000 boards
     let test_cases = generator.generate_batch(10_000);
@@ -75,14 +75,14 @@ fn test_tank_solver_calibration() {
         revealed_percentage: 0.3,
     };
     let mut generator = TestBoardGenerator::with_seed(config, 12345);
-    let solver = TankSolver::default();
+    let solver = TankSolver;
 
     // Generate and test 10,000 boards
     let test_cases = generator.generate_batch(10_000);
     let mut failures = 0;
 
     for (idx, (board, mine_positions)) in test_cases.iter().enumerate() {
-        if !validate_probabilistic_solver(&solver, board, &mine_positions) {
+        if !validate_probabilistic_solver(&solver, board, mine_positions) {
             println!("Failure on test case {}", idx);
             failures += 1;
         }
@@ -105,16 +105,16 @@ fn test_solver_chain_extensive() {
     };
     let mut generator = TestBoardGenerator::with_seed(config, 12345);
     let chain = SolverChain::new(0.95)
-        .add_deterministic(CountingSolver::default())
-        .add_deterministic(MatrixSolver::default())
-        .add_probabilistic(TankSolver::default());
+        .add_deterministic(CountingSolver)
+        .add_deterministic(MatrixSolver)
+        .add_probabilistic(TankSolver);
 
     // Generate and test 5,000 boards
     let test_cases = generator.generate_batch(5_000);
     let mut failures = 0;
 
     for (idx, (board, mine_positions)) in test_cases.iter().enumerate() {
-        if !validate_solver_chain(&chain, board, &mine_positions) {
+        if !validate_solver_chain(&chain, board, mine_positions) {
             println!("Failure on test case {}", idx);
             failures += 1;
         }
