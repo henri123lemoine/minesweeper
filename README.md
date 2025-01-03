@@ -15,6 +15,14 @@ Then:
 - Run `cargo test` to run the test suite.
 - Run `cargo run` to start the game.
 
+## Planned Features
+
+- [ ] Infinite board implementation
+- [ ] Procedural guaranteed-solvable board generation
+- [ ] Bevy game engine integration
+- [ ] Multiplayer functionality
+- [ ] Web deployment
+
 ## TODOs
 
 - [x] Basic game structure
@@ -37,6 +45,8 @@ Then:
     - [x] Counting solver
     - [x] Matrix solver
     - [x] Probability solver
+    - [ ] Spiral solver (`https://github.com/haveaLukeatthis/SelfSolvingMinesweeper/blob/main/HALAT-MineAndSolve.py`)
+- [ ] TESTS. Just way more tests.
 - [ ] Solvable board generation
   - [ ] Board validation system
   - [ ] Generation algorithm
@@ -57,6 +67,4 @@ Then:
 
 ## Acknowledgments
 
-- Rust community for resources and inspiration
-- Bevy engine documentation and community
 - New Sonnet 3.5
