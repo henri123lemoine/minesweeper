@@ -1,5 +1,7 @@
 use crate::{GameError, Position};
+use rand::rngs::StdRng;
 use rand::Rng;
+use rand::SeedableRng;
 use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -70,6 +72,32 @@ impl Board {
         Ok(board)
     }
 
+    pub fn new_with_seed(
+        width: u32,
+        height: u32,
+        mines_count: u32,
+        seed: u64,
+    ) -> Result<Self, GameError> {
+        if mines_count >= width * height {
+            return Err(GameError::TooManyMines {
+                width,
+                height,
+                mines: mines_count,
+            });
+        }
+
+        let mut board = Board {
+            cells: HashMap::new(),
+            width,
+            height,
+            mines_count,
+            revealed_count: 0,
+        };
+        board.initialize_cells();
+        board.place_mines_with_seed(seed);
+        Ok(board)
+    }
+
     fn initialize_cells(&mut self) {
         for pos in self.iter_positions() {
             self.cells.insert(pos, Cell::Hidden(false));
@@ -78,6 +106,22 @@ impl Board {
 
     fn place_mines(&mut self) {
         let mut rng = rand::thread_rng();
+        let mut mines_placed = 0;
+
+        while mines_placed < self.mines_count {
+            let x = rng.gen_range(0..self.width) as i32;
+            let y = rng.gen_range(0..self.height) as i32;
+            let pos = Position::new(x, y);
+
+            if let Some(Cell::Hidden(false)) = self.cells.get(&pos) {
+                self.cells.insert(pos, Cell::Hidden(true));
+                mines_placed += 1;
+            }
+        }
+    }
+
+    fn place_mines_with_seed(&mut self, seed: u64) {
+        let mut rng = StdRng::seed_from_u64(seed);
         let mut mines_placed = 0;
 
         while mines_placed < self.mines_count {
@@ -199,6 +243,32 @@ impl Board {
 
     pub fn total_cells(&self) -> u32 {
         self.width * self.height
+    }
+}
+
+#[cfg(test)]
+impl Board {
+    pub fn test_board_with_mines(
+        width: u32,
+        height: u32,
+        mine_positions: &[(i32, i32)],
+    ) -> Result<Self, GameError> {
+        let mut board = Board::new(width, height, mine_positions.len() as u32)?;
+        board.cells.clear();
+
+        // Initialize all cells as non-mines
+        for x in 0..width as i32 {
+            for y in 0..height as i32 {
+                board.cells.insert(Position::new(x, y), Cell::Hidden(false));
+            }
+        }
+
+        // Place mines at specified positions
+        for &(x, y) in mine_positions {
+            board.cells.insert(Position::new(x, y), Cell::Hidden(true));
+        }
+
+        Ok(board)
     }
 }
 

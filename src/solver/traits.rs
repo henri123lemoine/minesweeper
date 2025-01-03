@@ -56,11 +56,10 @@ macro_rules! solver_test_suite {
 
             #[test]
             fn test_deterministic_correctness() {
-                let mut board = Board::new(3, 3, 1).unwrap();
+                let mut board = Board::test_board_with_mines(3, 3, &[(0, 0)]).unwrap();
                 let solver = <$solver>::default();
 
-                // Place a mine in a known position
-                board.cells.insert(Position::new(0, 0), Cell::Hidden(true));
+                // Now we can mutate board
                 board.reveal(Position::new(1, 1)).unwrap();
 
                 let solver_board = SolverBoard::new(&board);
@@ -80,7 +79,7 @@ macro_rules! solver_test_suite {
         #[cfg(test)]
         mod solver_tests {
             use super::*;
-            use crate::{Board, Cell};
+            use $crate::{Board, Cell};
 
             #[test]
             fn test_probabilistic_calibration() {
@@ -89,7 +88,8 @@ macro_rules! solver_test_suite {
 
                 // Collect predictions across multiple games
                 for _ in 0..10000 {
-                    let board = Board::new(8, 8, 10).unwrap();
+                    let seed = 12345;
+                    let board = Board::new_with_seed(8, 8, 10, seed).unwrap();
                     let solver_board = SolverBoard::new(&board);
 
                     if let ProbabilisticResult::Uncertain(prob_map) = solver.assess(&solver_board) {
